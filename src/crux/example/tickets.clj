@@ -66,15 +66,12 @@
       (merge event)]
 
      [DetailsChanged Change ~ticket-fields
-      (merge event)
-      ;; (assoc :read-count (* 2 read-count))
-      ]
+      (merge event)]
 
      [Assigned Assign [assignee]
       {:constraints [open? ok?]
        :validations [(or* active?)]}
       (merge event)]
-     
      
 
      #_(command-validators
@@ -130,8 +127,6 @@
 (def ticket-constraints (get-in tickets-domain [:entities 'Ticket :events 'Assigned :constraints]))
 
 
-
-
 ;; (defmacro check [form message])
 ;; (defn open? [ticket]
 ;;   (= (:state ticket) :open))
@@ -150,25 +145,4 @@
 ;; (def reified-tickets-domain (reify-domain-records! tickets-domain))
 
 ;; reified-tickets-domain
-
-
-;; ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-;; (defn -mkmethod
-;;   [multifn dispatch-val method]
-;;   (. multifn ;; (with-meta multifn {:tag 'clojure.lang.MultiFn})
-;;      addMethod dispatch-val method))
-;; (def ticket-evs (get-in reified-tickets-domain [:entities 'Ticket
-;;                                                 :events]))
-;; (defmulti ticket-red (fn [ent ev] (type ev)))
-;; (doall (doseq [ev-spec (vals ticket-evs)]
-;;          (pprint (:record-class ev-spec))
-
-         ;; (eval `(defmethod ticket-red ~(symbol (:record-symbol ev-spec))
-         ;;          [ent# ev#] (~(:reducers ev-spec) ent# ev#)))
-
-         ;; (-mkmethod ticket-red (:record-class ev-spec) (:reducers ev-spec))
-         ;; ))
- 
-
 

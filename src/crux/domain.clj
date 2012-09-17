@@ -1,14 +1,10 @@
 (ns crux.domain
   (:require [slingshot.slingshot :refer (throw+)])
   (:require [crux.util
-             :refer (unquoted?
+             :refer (eval-with-meta
+                     unquoted?
                      defrecord-dynamically
                      defrecord-keep-meta)]))
-
-(defn eval-with-meta [form meta-info]
-  (with-meta (eval form)
-    (merge {:crux/generated-code form}
-           meta-info)))
 
 (defprotocol ICruxSpec
   (-validate-spec [this]))
@@ -283,14 +279,11 @@
 
 (defmacro command-validators [entity-spec & actions] entity-spec)
 
-;; (defn gen-constraint-checker [entity property-names forms]
-;;   (eval `(fn [entity#
-;;               {:keys [~@property-names] :as properties#}]
-;;            (let [~(symbol "entity") entity#]
-;;              (-> entity#
-;;                  ~@forms)))))
+(defn first-unmet-constraint [entity entity-properties constraint-forms+preds]
+  (some (fn -or* [[form pred]] (if-not (pred [entity entity-properties]) form))
+        constraint-forms+preds))
 
-
-
-
-;; (some (fn -or* [[form pred]] (if-not (pred o) form)) forms+preds)
+(defn unmet-constraints [entity entity-properties constraint-forms+preds]
+  (for [[form pred] constraint-forms+preds
+        :when (not (pred [entity entity-properties]))]
+    form))
