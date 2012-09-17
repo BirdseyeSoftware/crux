@@ -60,9 +60,7 @@
      last-reader (last (:read-by entity))
      open? (= :open (:state entity))
      ok?  (= "ok" (:title entity)))
-    ;; => (get-in entity-spec [:properties 'open?])
-  
-    
+
     (events
      [Created Create ~ticket-fields
       (merge event)]
@@ -73,7 +71,7 @@
       ]
 
      [Assigned Assign [assignee]
-      #_{:constraints [open? ok?]
+      {:constraints [open? ok?]
        :validations [(or* active?)]}
       (merge event)]
      
@@ -129,6 +127,7 @@
      ok? (= (:title entity) "not-ok"))))
 
 (def ticket-properties (get-in tickets-domain [:entities 'Ticket :properties]))
+(def ticket-constraints (get-in tickets-domain [:entities 'Ticket :events 'Assigned :constraints]))
 
 
 
@@ -170,3 +169,6 @@
 
          ;; (-mkmethod ticket-red (:record-class ev-spec) (:reducers ev-spec))
          ;; ))
+ 
+
+
