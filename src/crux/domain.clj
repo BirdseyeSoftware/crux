@@ -19,7 +19,8 @@
 (defrecord-keep-meta EventSpec
   [^{:type Symbol} name
    ^{:type list.of.Symbol} fields
-   ^{:type list.of.EventReductionSpec} reducer-specs
+   ^{:type list.of.EventReductionSpec} reduce-forms
+   ^{:type Fn } reducer
    ^{:type CruxDefaults} defaults
    ])
 
@@ -107,42 +108,83 @@
     (format "Crux: %s '%s' already declared for %s '%s'"
             declaration-type sym owner-type owner))))
 
+(defn- throw-reduce-forms-required-error [event-symbol]
+  (throw+
+   (java.lang.IllegalArgumentException.
+    (format "Crux: %s '%s' requires a reduce form"
+            event-symbol))))
+
 (defn gen-event-reducer [event-fields forms]
-  (eval `(fn [entity#
+  (eval `(fn event-reduce-fn [entity#
               {:keys [~@event-fields] :as event#}]
            (let [~(symbol "entity") entity#
                  ~(symbol "event") event#
-                 {~(symbol "*entity-id*") :oid} entity#
-                 {~(symbol "*event-id*") :oid} event#]
+                 {~(symbol "entity-id") :oid} entity#
+                 {~(symbol "event-id") :oid} event#]
              (-> entity#
                  ~@forms)))))
 
+(defn gen-single-constraint-checker [entity-spec form]
+  (let [property-symbols (keys (:properties entity-spec))]
+    (eval `(fn constraint-checker [[entity#
+                 {:keys [;~@property-symbols
+                         open? ok?] :as entity-properties#}]]
+             (let [~(symbol "entity") entity#]
+               (-> entity#
+                   ~form))))))
+
 (defn event* [entity-spec
-              [event-symbol command-symbol event-fields reduce-specs]]
+              {:keys [event-symbol command-symbol event-fields
+                      additional-event-attrs reduce-forms]
+               :as event-spec}]
   (when (get-in entity-spec [:events event-symbol])
     (throw-aready-declared-error
      'event event-symbol 'entity (:name entity-spec)))
+
+  (when-not reduce-forms
+    (throw-reduce-forms-required-error event-symbol))
+
   (when (get-in entity-spec [:commands command-symbol])
     (throw-aready-declared-error
      'command command-symbol 'entity (:name entity-spec)))
 
-  (let [event-spec (map->EventSpec
+  (let [command-constraints (:constraints additional-event-attrs)
+        event-spec (map->EventSpec
                     {:defaults (:defaults entity-spec)
                      :name event-symbol
-                     :fields event-fields})
-        reducers (gen-event-reducer event-fields reduce-specs)
+                     :fields event-fields
+                     :command-constraints command-constraints
+                     :additional-event-attrs additional-event-attrs
+                     :reduce-forms reduce-forms})
+        reducer (gen-event-reducer event-fields reduce-forms)
         command-spec (assoc (map->CommandSpec event-spec)
                        :name command-symbol
                        :event event-symbol)
-        event-spec (assoc event-spec :reducers reducers)]
+        event-spec (assoc event-spec :constraints-map
+                          (into (array-map)
+                                (for [form command-constraints]
+                                  (gen-single-constraint-checker entity-spec
+                                                                 form))))
+        event-spec (assoc event-spec :reducer reducer)]
     (-> entity-spec
         (update-in [:events] assoc event-symbol event-spec)
         (update-in [:commands] assoc command-symbol command-spec))))
 
 (defn- quote-event-spec-form
-  [[event-symbol command-symbol event-fields & reduce-spec]]
-  (let [event-fields (-quote-or-unquote-fields-form event-fields event-symbol)]
-    `['~event-symbol '~command-symbol ~event-fields '~reduce-spec]))
+  [[event-symbol command-symbol event-fields & rem]]
+  (let [event-fields (-quote-or-unquote-fields-form event-fields event-symbol)
+        [additional-event-attrs
+         reduce-forms] (if (map? (first rem))
+                        [(first rem) (rest rem)]
+                        [nil rem])]
+   (when-not reduce-forms
+    (throw-reduce-forms-required-error event-symbol))
+
+    `{:event-symbol '~event-symbol
+      :command-symbol '~command-symbol
+      :event-fields ~event-fields
+      :additional-event-attrs '~additional-event-attrs
+      :reduce-forms '~reduce-forms}))
 
 (defmacro events [entity-spec & event-specs]
   (let [event-specs (into [] (map quote-event-spec-form event-specs))]
@@ -175,10 +217,23 @@
    entity-spec [:defaults :type-inference-rules]
    conj [regex abstract-type]))
 
+
+(defn gen-entity-property-fn [property-symbol entity-properties form]
+  (eval `(fn ~property-symbol [entity#]
+           (let [~(symbol "entity") entity#]
+             ~form))))
+
 (defmacro properties [entity-spec & property-pairs]
   ;;TODO: normalize property-pairs
-  `(let [properties-map# (into {} '~property-pairs)]
-     (update-in entity-spec [:properties] merge properties-map#)))
+  `(let [properties-map# (into {} (map #(into [] %)
+                                       (partition 2 '~property-pairs)))]
+     (-> ~entity-spec
+         (update-in [:property-forms] merge properties-map#)
+         (assoc :properties
+           (into {}
+                 (for [[sym# form#] properties-map#]
+                   [sym# (gen-entity-property-fn
+                          sym# properties-map# form#)]))))))
 
 (defn id-field* [entity-spec id-field-name & [id-type]]
   (assoc entity-spec :id-field {:name id-field-name
@@ -188,9 +243,14 @@
 
 (defmacro command-validators [entity-spec & actions] entity-spec)
 
-(defn gen-constraint-checker [entity property-names forms]
-  (eval `(fn [entity#
-              {:keys [~@property-names] :as properties#}]
-           (let [~(symbol "entity") entity#]
-             (-> entity#
-                 ~@forms)))))
+;; (defn gen-constraint-checker [entity property-names forms]
+;;   (eval `(fn [entity#
+;;               {:keys [~@property-names] :as properties#}]
+;;            (let [~(symbol "entity") entity#]
+;;              (-> entity#
+;;                  ~@forms)))))
+
+
+
+
+;; (some (fn -or* [[form pred]] (if-not (pred o) form)) forms+preds)

@@ -56,12 +56,13 @@
     (type-infer-rule #"\?$" :Bool)
     (field-types ~ticket-field-types)
     (field-types {Assigned/assignee :User})
-    #_(properties
+    (properties
      last-reader (last (:read-by entity))
      open? (= :open (:state entity))
      ok?  (= "ok" (:title entity)))
     ;; => (get-in entity-spec [:properties 'open?])
-
+  
+    
     (events
      [Created Create ~ticket-fields
       (merge event)]
@@ -72,17 +73,11 @@
       ]
 
      [Assigned Assign [assignee]
+      #_{:constraints [open? ok?]
+       :validations [(or* active?)]}
       (merge event)]
-
-     ;; [Assigned [assignee]
-     ;;  (merge event)
-     ;;  Assign
-     ;;  (pre open?)]
-
-     #_[Assigned Assign [assignee]
-      {:constrain [open? ok?]
-       :validate [(or* active?)]}
-      (merge event)]
+     
+     
 
      #_(command-validators
         [DetailsChanged
@@ -105,7 +100,6 @@
          (check (not (empty? (get-in event [:description]))) "error")
 
          ;;[:assignee [:User/active? :User/can-own-ticket?]]
-
          ])
 
      [Read Read [user-id]
@@ -122,46 +116,57 @@
      [AttachmentAdded Attach  [url private?]
       ;; entity
       ;; event
-      ;; *event-id*
-      ;; *entity-id*
+      ;; event-id
+      ;; entity-id
       ;; (crux/assoc-in )
-      (update-in [:attachments] merge {*event-id* event})]
+      (update-in [:attachments] merge {event-id event})]
+     
 
      [AttachmentDeleted DeleteAttachment
       [attachment-id]
-      (update-in [:attachments] dissoc *event-id*)])))
+      (update-in [:attachments] dissoc event-id)])
+    (properties
+     ok? (= (:title entity) "not-ok"))))
 
-(defmacro check [form message])
-(defn open? [ticket]
-  (= (:state ticket) :open))
+(def ticket-properties (get-in tickets-domain [:entities 'Ticket :properties]))
 
-(defn has-name? [user]
-  (-> (:name user) nil? not))
 
-(defn non-nil? [o fields]
-  (check (not (nil? (get-in o fields)))
-         "failed"))
 
-(def valid? (check (or (open? entity)
-                (p2? *))
-            "must be open"))
-(def reified-tickets-domain (reify-domain-records! tickets-domain))
-reified-tickets-domain
+
+;; (defmacro check [form message])
+;; (defn open? [ticket]
+;;   (= (:state ticket) :open))
+
+;; (defn has-name? [user]
+;;   (-> (:name user) nil? not))
+
+;; (defn non-nil? [o fields]
+;;   (check (not (nil? (get-in o fields)))
+;;          "failed"))
+
+;; (def valid? (check (or (open? entity)
+;;                 (p2? *))
+;;             "must be open"))
+
+;; (def reified-tickets-domain (reify-domain-records! tickets-domain))
+
+;; reified-tickets-domain
+
 
 ;; ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(defn -mkmethod
-  [multifn dispatch-val method]
-  (. multifn ;; (with-meta multifn {:tag 'clojure.lang.MultiFn})
-     addMethod dispatch-val method))
-(def ticket-evs (get-in reified-tickets-domain [:entities 'Ticket
-                                                :events]))
-(defmulti ticket-red (fn [ent ev] (type ev)))
-(doall (doseq [ev-spec (vals ticket-evs)]
-         (pprint (:record-class ev-spec))
+;; (defn -mkmethod
+;;   [multifn dispatch-val method]
+;;   (. multifn ;; (with-meta multifn {:tag 'clojure.lang.MultiFn})
+;;      addMethod dispatch-val method))
+;; (def ticket-evs (get-in reified-tickets-domain [:entities 'Ticket
+;;                                                 :events]))
+;; (defmulti ticket-red (fn [ent ev] (type ev)))
+;; (doall (doseq [ev-spec (vals ticket-evs)]
+;;          (pprint (:record-class ev-spec))
 
          ;; (eval `(defmethod ticket-red ~(symbol (:record-symbol ev-spec))
          ;;          [ent# ev#] (~(:reducers ev-spec) ent# ev#)))
 
-         (-mkmethod ticket-red (:record-class ev-spec) (:reducers ev-spec))
-         ))
+         ;; (-mkmethod ticket-red (:record-class ev-spec) (:reducers ev-spec))
+         ;; ))
