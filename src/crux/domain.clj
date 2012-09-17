@@ -107,37 +107,15 @@
     (format "Crux: %s '%s' already declared for %s '%s'"
             declaration-type sym owner-type owner))))
 
-(def event-reduce-strategy-validators
-  {:inc (fn not-using [entity-spec event-symbol event-fields args]
-          (assert (= 1 (count args)) args)
-          (let [field-name (symbol (name (first args)))]
-            (assert (not (keyword? field-name)))
-            (assert (some #{field-name}
-                          (:fields entity-spec))
-                    (str (:fields entity-spec) " - " field-name)))
-          true),
-   :merge (constantly true)
-   :conj (constantly true)
-   :assoc (constantly true)
-   :dissoc (constantly true)
-   })
-
-(defn validate-event-reducer-spec
-  [entity-spec event-symbol event-fields {:keys [name args]}]
-  (assert (keyword? name))
-  (let [validator (event-reduce-strategy-validators name)]
-    (assert validator (str name))
-    (assert (validator entity-spec event-symbol event-fields
-                       args)
-            (str name " validation failed"))))
-
-(defn -norm-event-reduce-spec [spec]
-  (let [spec (cond (keyword? spec) [spec]
-                   (map? spec) [:merge spec]
-                   :else spec)
-        [spec-name & spec-args] spec]
-    (map->EventReductionSpec {:name spec-name
-                              :args spec-args})))
+(defn gen-event-reducer [event-fields forms]
+  (eval `(fn [entity#
+              {:keys [~@event-fields] :as event#}]
+           (let [~(symbol "entity") entity#
+                 ~(symbol "event") event#
+                 {~(symbol "*entity-id*") :oid} entity#
+                 {~(symbol "*event-id*") :oid} event#]
+             (-> entity#
+                 ~@forms)))))
 
 (defn event* [entity-spec
               [event-symbol command-symbol event-fields reduce-specs]]
@@ -152,13 +130,11 @@
                     {:defaults (:defaults entity-spec)
                      :name event-symbol
                      :fields event-fields})
-        reduce-specs (map -norm-event-reduce-spec reduce-specs)
+        reducers (gen-event-reducer event-fields reduce-specs)
         command-spec (assoc (map->CommandSpec event-spec)
-                       :name command-symbol)
-        event-spec (assoc event-spec :reducer-specs reduce-specs)]
-    (doseq [spec reduce-specs]
-      (validate-event-reducer-spec entity-spec event-symbol
-                                   event-fields spec))
+                       :name command-symbol
+                       :event event-symbol)
+        event-spec (assoc event-spec :reducers reducers)]
     (-> entity-spec
         (update-in [:events] assoc event-symbol event-spec)
         (update-in [:commands] assoc command-symbol command-spec))))
@@ -199,8 +175,10 @@
    entity-spec [:defaults :type-inference-rules]
    conj [regex abstract-type]))
 
-(defn properties [entity-spec properties-map]
-  (update-in entity-spec [:properties] merge properties-map))
+(defmacro properties [entity-spec & property-pairs]
+  ;;TODO: normalize property-pairs
+  `(let [properties-map# (into {} '~property-pairs)]
+     (update-in entity-spec [:properties] merge properties-map#)))
 
 (defn id-field* [entity-spec id-field-name & [id-type]]
   (assoc entity-spec :id-field {:name id-field-name
@@ -209,3 +187,10 @@
   `(id-field* ~entity-spec '~id-field-name ~id-type))
 
 (defmacro command-validators [entity-spec & actions] entity-spec)
+
+(defn gen-constraint-checker [entity property-names forms]
+  (eval `(fn [entity#
+              {:keys [~@property-names] :as properties#}]
+           (let [~(symbol "entity") entity#]
+             (-> entity#
+                 ~@forms)))))
