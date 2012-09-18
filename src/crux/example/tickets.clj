@@ -72,7 +72,7 @@
       {:constraints [open? ok?]
        :validations [(or* active?)]}
       (merge event)]
-     
+
 
      #_(command-validators
         [DetailsChanged
@@ -115,7 +115,7 @@
       ;; entity-id
       ;; (crux/assoc-in )
       (update-in [:attachments] merge {event-id event})]
-     
+
 
      [AttachmentDeleted DeleteAttachment
       [attachment-id]
@@ -123,8 +123,10 @@
     (properties
      ok? (= (:title entity) "not-ok"))))
 
-(def ticket-properties (get-in tickets-domain [:entities 'Ticket :properties]))
-(def ticket-constraints (get-in tickets-domain [:entities 'Ticket :events 'Assigned :constraints]))
+(def ticket-properties
+  (get-in tickets-domain [:entities 'Ticket :properties]))
+(def ticket-constraints
+  (get-in tickets-domain [:entities 'Ticket :events 'Assigned :constraints]))
 
 (defn get-entity-ctor [domain-spec entity]
   (get-in domain-spec [:entities entity :record-ctor]))
@@ -151,6 +153,21 @@
 (def reified-tickets-domain (reify-domain-records! tickets-domain))
 reified-tickets-domain
 
+(def ticket-entity-spec
+  (get-in reified-tickets-domain [:entities 'Ticket ]))
+
+(def assigned-event-spec
+  (get-in ticket-entity-spec [:events 'Assigned]))
+
 (def t1 (construct reified-tickets-domain 'Ticket {:state :open :title "not-ok"}))
 
 (unmet-constraints t1 ticket-constraints)
+
+(defn check [{:keys [entity event user]}
+             validation-value error-msg]
+  (when (not validation-value)
+    error-msg))
+
+(def v1 (gen-single-command-validator
+         ticket-entity-spec
+         assigned-event-spec '(check (ok? entity) "fail")))
