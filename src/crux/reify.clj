@@ -36,10 +36,18 @@
       (reify-all-event-or-command-records! entity-symbol :commands)))
 
 (defn reify-entity-record! [domain-spec entity-symbol]
-  (let [fields (get-in domain-spec [:entities entity-symbol :fields])]
+  (let [entity-spec (get-in domain-spec [:entities entity-symbol])
+        fields (:fields entity-spec)
+        properties (:properties entity-spec)
+        defrecord-map (defrecord-dynamically entity-symbol fields)
+        orig-ctor (:record-ctor defrecord-map)
+        crux-meta-fields {:crux/properties properties}
+        defrecord-map (assoc defrecord-map
+                        :record-ctor
+                        (fn [m] (orig-ctor
+                                 (merge crux-meta-fields m))))]
     (update-in domain-spec [:entities entity-symbol]
-               merge
-               (defrecord-dynamically entity-symbol fields))))
+               merge defrecord-map)))
 
 (defn reify-all-entity-records! [domain-spec]
   (reduce reify-entity-record! domain-spec (keys (:entities domain-spec))))

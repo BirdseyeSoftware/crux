@@ -34,8 +34,8 @@
         ctor-symbol (symbol (str "map->" record-symbol))]
     {:record-class cls
      :record-symbol record-symbol
-     :ctor (eval `~ctor-symbol)
-     :ctor-symbol ctor-symbol}))
+     :record-ctor (eval `~ctor-symbol)
+     :record-ctor-symbol ctor-symbol}))
 
 (defmacro defrecord-keep-meta [name [& fields-with-meta] & body]
   `(do

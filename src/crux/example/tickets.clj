@@ -126,6 +126,12 @@
 (def ticket-properties (get-in tickets-domain [:entities 'Ticket :properties]))
 (def ticket-constraints (get-in tickets-domain [:entities 'Ticket :events 'Assigned :constraints]))
 
+(defn get-entity-ctor [domain-spec entity]
+  (get-in domain-spec [:entities entity :record-ctor]))
+
+(defn construct [domain-spec entity init-fields]
+  ((get-entity-ctor domain-spec entity) init-fields))
+
 
 ;; (defmacro check [form message])
 ;; (defn open? [ticket]
@@ -142,7 +148,9 @@
 ;;                 (p2? *))
 ;;             "must be open"))
 
-;; (def reified-tickets-domain (reify-domain-records! tickets-domain))
+(def reified-tickets-domain (reify-domain-records! tickets-domain))
+reified-tickets-domain
 
-;; reified-tickets-domain
+(def t1 (construct reified-tickets-domain 'Ticket {:state :open :title "not-ok"}))
 
+(unmet-constraints t1 ticket-constraints)

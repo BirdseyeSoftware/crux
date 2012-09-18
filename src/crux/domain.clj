@@ -138,9 +138,9 @@
 
 (defn gen-single-constraint-checker [entity-spec form]
   (let [property-symbols (keys (:properties entity-spec))
-        fn-form `(fn constraint-checker [[entity#
-                                          entity-properties#]]
+        fn-form `(fn constraint-checker [entity#]
                    (let [~(symbol "entity") entity#
+                         entity-properties# (:crux/properties entity#)
                          {:keys [~@property-symbols]}
                          (into {} (for [[k# v#] entity-properties#]
                                     [(keyword k#) v#]))]
@@ -279,11 +279,11 @@
 
 (defmacro command-validators [entity-spec & actions] entity-spec)
 
-(defn first-unmet-constraint [entity entity-properties constraint-forms+preds]
-  (some (fn -or* [[form pred]] (if-not (pred [entity entity-properties]) form))
+(defn first-unmet-constraint [entity constraint-forms+preds]
+  (some (fn -or* [[form pred]] (if-not (pred entity) form))
         constraint-forms+preds))
 
-(defn unmet-constraints [entity entity-properties constraint-forms+preds]
+(defn unmet-constraints [entity constraint-forms+preds]
   (for [[form pred] constraint-forms+preds
-        :when (not (pred [entity entity-properties]))]
+        :when (not (pred entity))]
     form))
