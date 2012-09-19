@@ -61,7 +61,7 @@ removed. The temporary namespace will 'refer' clojure.core."
                            (str "reader crashed"
                                 (.getMessage e)) e))))]
       (when-not (= form ::eof)
-        (cons form (read-file r))))))
+        (cons form (-read-file r))))))
 
 (defn read-file [file-or-path]
   (-read-file
@@ -74,6 +74,14 @@ removed. The temporary namespace will 'refer' clojure.core."
 
 (deftest read-events-from-file
   (let [fpath "test/crux/example/tickets_sample_events1.clj"
-        data-readers (get-domain-data-readers (tickets/build-reified-test-domain-spec) 'tickets)]
+        domain-spec (tickets/build-reified-test-domain-spec)
+        data-readers (get-domain-data-readers domain-spec 'tickets)
+        ticket-ctor (get-in domain-spec [:crux.reify/constructors 'Ticket])
+        ticket-reducer (get-in domain-spec [:crux.reify/reducers 'Ticket])
+        ticket0 (ticket-ctor {})]
     (binding [*data-readers* data-readers]
-              (print (read-file fpath)))))
+      (let [events (read-file fpath)
+            events-by-oid (group-by :oid events)]
+        (doseq [[oid evts] events-by-oid]
+          (let [ticket (reduce ticket-reducer ticket0 evts)]
+            (println oid ticket)))))))

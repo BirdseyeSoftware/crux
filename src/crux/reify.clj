@@ -1,6 +1,8 @@
 (ns crux.reify
+  (:require [slingshot.slingshot :refer [throw+]])
   (:require [crux.internal.keys :refer :all])
   (:require [crux.util :refer [defrecord-dynamically
+                               addmethod-to-multi
                                map-over-keys map-over-values]]))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -105,22 +107,30 @@
       reify-events-or-commands-for-each-entity!))
 
 
+(defn reifier-entity-event-reducer [domain-spec entity-symbol]
+  (let [multi-name (symbol (format "%s-event-reducer" entity-symbol))
+        events (get-in domain-spec  [ENTITIES entity-symbol EVENTS])
+        multifn-var (eval `(defmulti ~multi-name
+                             (fn [entity# event#] (type event#))))
+        multifn (eval `~multi-name)]
+    
+    (doseq [[event-symbol event-spec] events]
+      (let [event-symbol (-entity-subrecord-symbol
+                          entity-symbol event-symbol :event)
+            reducer-fn (REDUCER event-spec)
+            record-map (get-in domain-spec [:crux.reify/records event-symbol])]
+        (when-not reducer-fn
+          (throw+ {:type :library/specify-reducer-error
+                   :msg ""}))
+        (addmethod-to-multi
+         multifn (:record-class record-map) (REDUCER event-spec))))
+    (update-in domain-spec [:crux.reify/reducers]
+               assoc entity-symbol multifn)))
+
 (defn reify-domain-spec! [domain-spec]
   (-> domain-spec
       reify-domain-records!
-      reify-get-entity-function))
+      reify-get-entity-function
+      (reifier-entity-event-reducer 'Ticket)))
 
-;; (defn defmulti-event-reducer [domain-map multi-name entity-symbol]
-;;   (let [events (get-in domain-map
-;;                        [ENTITIES entity-symbol EVENTS])]
-;;     (eval `(defmulti ~multi-name (fn [entity# event#] (type event#))))
-;;     (doseq [[event-symbol event-map] events]
-;;       (let [event-symbol (-entity-event-symbol entity-symbol
-;;                                                event-symbol)
-;;             reducer-fn (REDUCER event-map)]
-;;         (when-not reducer-fn
-;;           (throw+ {:type :library/specify-reducer-error
-;;                    :msg ""}))
-;;         (eval `(defmethod ~multi-name ~event-symbol [state0# evt#]
-;;                  (~reducer-fn state0# evt#)))))
-;;     domain-map))
+
