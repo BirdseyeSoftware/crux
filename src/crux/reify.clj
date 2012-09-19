@@ -107,7 +107,7 @@
       reify-events-or-commands-for-each-entity!))
 
 
-(defn reifier-entity-event-reducer [domain-spec entity-symbol]
+(defn reify-entity-event-reducer! [domain-spec entity-symbol]
   (let [multi-name (symbol (format "%s-event-reducer" entity-symbol))
         events (get-in domain-spec  [ENTITIES entity-symbol EVENTS])
         multifn-var (eval `(defmulti ~multi-name
@@ -127,10 +127,14 @@
     (update-in domain-spec [:crux.reify/reducers]
                assoc entity-symbol multifn)))
 
+(defn reify-all-entity-event-reducers! [domain-spec]
+  (reduce reify-entity-event-reducer!
+          domain-spec (keys (ENTITIES domain-spec))) )
+
 (defn reify-domain-spec! [domain-spec]
   (-> domain-spec
       reify-domain-records!
-      reify-get-entity-function
-      (reifier-entity-event-reducer 'Ticket)))
+      ;; reify-get-entity-function!
+      reify-all-entity-event-reducers!))
 
 

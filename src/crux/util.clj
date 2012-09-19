@@ -1,5 +1,8 @@
 (ns crux.util
-  )
+  (:require [clojure.set :as set]))
+
+(defn submap? [m superm]
+  (set/subset? (set (seq m)) (set (seq superm))))
 
 (defn map-over-values [modifier-fn m]
   (into {} (for [[k v] m]

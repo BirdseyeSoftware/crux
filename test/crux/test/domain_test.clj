@@ -1,9 +1,10 @@
 (ns crux.test.domain-test
   (:require [clojure.test :refer :all]
+            [clojure.data :refer [diff]]
             [crux.example.tickets :as tickets]
             [crux.domain :as domain]
             [crux.internal.keys :refer :all]
-            [crux.util :refer [map-over-keys]])
+            [crux.util :refer [map-over-keys submap?]])
   (:require [clojure.java.io :refer [input-stream reader]])
   (:import [crux.domain DomainSpec])
   (:import [clojure.lang LineNumberingPushbackReader])
@@ -72,16 +73,21 @@ removed. The temporary namespace will 'refer' clojure.core."
    #(symbol (format "%s/%s" prefix %))
    (:crux.reify/constructors domain-spec)))
 
+(defn assert-reduction
+  ([reducer-fn init-st events expected-final-st]
+     (let [final (reduce reducer-fn init-st events)]
+       (is (submap? expected-final-st final)))))
+
 (deftest read-events-from-file
   (let [fpath "test/crux/example/tickets_sample_events1.clj"
         domain-spec (tickets/build-reified-test-domain-spec)
         data-readers (get-domain-data-readers domain-spec 'tickets)
-        ticket-ctor (get-in domain-spec [:crux.reify/constructors 'Ticket])
-        ticket-reducer (get-in domain-spec [:crux.reify/reducers 'Ticket])
-        ticket0 (ticket-ctor {})]
+        ]
     (binding [*data-readers* data-readers]
-      (let [events (read-file fpath)
-            events-by-oid (group-by :oid events)]
-        (doseq [[oid evts] events-by-oid]
-          (let [ticket (reduce ticket-reducer ticket0 evts)]
-            (println oid ticket)))))))
+      (doseq [test-map (read-file fpath)]
+        (let [{entity-symbol :entity
+               :keys [initial events expected]} test-map  
+              entity-ctor (get-in domain-spec [:crux.reify/constructors entity-symbol])
+              entity-reducer (get-in domain-spec [:crux.reify/reducers entity-symbol])
+              entity0 (or initial (entity-ctor {}))]
+          (assert-reduction entity-reducer entity0 events expected))))))

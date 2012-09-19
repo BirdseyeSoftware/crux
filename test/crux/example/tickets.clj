@@ -6,8 +6,6 @@
   (:require [crux.domain :refer :all])
   (:require [crux.reify :refer [reify-domain-spec!]]))
 
-
-
 (def ticket-field-types
   '{oid :guid
     parent-ticket :Ticket
@@ -281,10 +279,11 @@
 
     (events
      [Created Create ~ticket-fields
-      (merge event)]
+      (merge {:read-count 0}
+             (filter second event))]
 
      [DetailsChanged Change ~ticket-fields
-      (merge event)]
+      (merge (filter second event))]
 
      [Assigned Assign [assignee]
       {:constraints [ok?]
@@ -301,7 +300,7 @@
 
      [Closed Close []
       (assoc :state :closed)
-      (dissoc :assignee)]
+      (assoc :assignee nil)]
 
      [CommentAdded Comment [foo bar]
       (update-in [:comments] conj event)]
