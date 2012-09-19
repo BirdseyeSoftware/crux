@@ -12,9 +12,9 @@
 ;;          (pprint (:record-class ev-spec))
 
          ;; (eval `(defmethod ticket-red ~(symbol (:record-symbol ev-spec))
-         ;;          [ent# ev#] (~(:reducers ev-spec) ent# ev#)))
+         ;;          [ent# ev#] (~(REDUCERs ev-spec) ent# ev#)))
 
-         ;; (-mkmethod ticket-red (:record-class ev-spec) (:reducers ev-spec))
+         ;; (-mkmethod ticket-red (:record-class ev-spec) (REDUCERs ev-spec))
          ;; ))
 
 
