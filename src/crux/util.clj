@@ -1,6 +1,14 @@
 (ns crux.util
   )
 
+(defn map-over-values [modifier-fn m]
+  (into {} (for [[k v] m]
+             [k (modifier-fn v)])))
+
+(defn map-over-keys [modifier-fn m]
+  (into {} (for [[k v] m]
+             [(modifier-fn k) v])))
+
 ;; (defn -mkmethod
 ;;   [multifn dispatch-val method]
 ;;   (. multifn ;; (with-meta multifn {:tag 'clojure.lang.MultiFn})

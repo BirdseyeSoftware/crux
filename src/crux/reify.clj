@@ -1,25 +1,27 @@
 (ns crux.reify
   (:require [crux.internal.keys :refer :all])
-  (:require [crux.util :refer [defrecord-dynamically]]))
+  (:require [crux.util :refer [defrecord-dynamically
+                               map-over-keys map-over-values]]))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; Crux Reification code:
 ;;; abstract-spec -> real records, fns, protos/interfaces, etc.
 
 
-(defn map-over-values [m modifier-fn]
-  (into {} (for [[k v] m]
-             [k (modifier-fn v)])))
-
-(defn map-over-keys [m modifier-fn]
-  (into {} (for [[k v] m]
-             [(modifier-fn k) v])))
-
 ;;TODO: make this a configurable callback in the entity-map
 (defn- -entity-subrecord-symbol [entity-symbol event-symbol record-type]
   (symbol (case record-type
             :event (format "%s%s" entity-symbol event-symbol)
             :command (format "%s%s" event-symbol entity-symbol))))
+
+
+(defn add-constructor-and-records-to-domain-spec
+  [domain-spec record-symbol record-map]
+  (-> domain-spec
+      (update-in [:crux.reify/records]
+                 assoc record-symbol record-map) 
+      (update-in [:crux.reify/constructors]
+                 assoc record-symbol (:record-ctor record-map))))
 
 (defn reify-event-or-command-record-for-entity-event!
   [domain-spec [entity-symbol event-symbol command-or-event-keyword]]
@@ -28,17 +30,18 @@
                                   command-or-event-keyword)
         fields (get-in domain-spec [ENTITIES entity-symbol
                                     EVENTS   event-symbol
-                                    FIELDS])]
+                                    FIELDS])
+        record-map (defrecord-dynamically
+                     command-or-event-rec-symbol fields)]
     (-> domain-spec
         (update-in [ENTITIES entity-symbol EVENTS event-symbol]
                    merge
-                   (into {}
-                         (for [[k v]
-                               (defrecord-dynamically
-                                 command-or-event-rec-symbol fields)]
-                           [(keyword (format "%s-%s"
-                                             (name command-or-event-keyword)
-                                             (name k))) v]))))))
+                   (map-over-keys #(format "%s-%s"
+                                           (name command-or-event-keyword)
+                                           (name %))
+                                  record-map))
+        (add-constructor-and-records-to-domain-spec
+             command-or-event-rec-symbol record-map))))
 
 (defn reify-event-or-command-records-for-entity!
   [domain-spec [entity-symbol command-or-event-keyword]]
@@ -60,8 +63,10 @@
                         :record-ctor
                         (fn [m] (orig-ctor
                                  (merge crux-meta-fields m))))]
-    (update-in domain-spec [ENTITIES entity-symbol]
-               merge defrecord-map)))
+    (-> domain-spec
+        (update-in [ENTITIES entity-symbol] merge defrecord-map)
+        (add-constructor-and-records-to-domain-spec
+            entity-symbol defrecord-map))))
 
 (defn reify-all-entity-records! [domain-spec]
   (reduce reify-entity-record! domain-spec (keys (ENTITIES domain-spec))))
@@ -81,8 +86,8 @@
 ;; }
 
 (defn reify-get-entity-function [domain-spec]
-  (let [entity-caches-map (map-over-values (ENTITIES domain-spec)
-                                           (constantly (atom {})))]
+  (let [entity-caches-map (map-over-values (constantly (atom {}))
+                                           (ENTITIES domain-spec))]
     (-> domain-spec
         (assoc :entity-caches-map entity-caches-map)
         (assoc 

@@ -7,6 +7,11 @@
                      defrecord-dynamically
                      defrecord-keep-meta)]))
 
+(defn check [{:keys [entity event user]}
+             validation-value error-msg]
+  (when (not validation-value)
+    error-msg))
+
 (defprotocol ICruxSpec
   (-validate-spec [this]))
 
@@ -64,7 +69,7 @@
     (-validate-spec entity-spec))
   domain-spec)
 
-(defrecord-keep-meta DomainSpec
+(defrecord DomainSpec
     [^{:type Symbol} name
      ^{:type CruxDefaults} defaults
      ^{:type map.of.Symbol->EntitySpec} entities
@@ -78,15 +83,30 @@
 ;;;;
 ;;; Crux DDL: minor fns/macros
 
+(defn -ensure-is-crux-domain-spec [m]
+  (if (instance? DomainSpec m)
+    m
+    (map->DomainSpec m)))
+
+(defn -seed-domain-with-crux-defaults [domain-spec]
+  (if-let [provided-defaults (DEFAULTS domain-spec)]
+    (if-not (instance? CruxDefaults provided-defaults)
+      (assoc domain-spec DEFAULTS (map->CruxDefaults provided-defaults))
+      domain-spec)
+    (assoc domain-spec DEFAULTS (map->CruxDefaults {}))))
+
 (defmacro create-domain [initial-spec & body]
   `(do
-     (assert (instance? DomainSpec ~initial-spec))
-     (-> ~initial-spec ~@body -validate-domain-spec)))
+     (assert (:name ~initial-spec))
+     (-> ~initial-spec
+         -ensure-is-crux-domain-spec
+         -seed-domain-with-crux-defaults
+         ~@body
+         -validate-domain-spec)))
 
 (defmacro defdomain [domain-name & body]
   `(def ~domain-name
-     (create-domain (map->DomainSpec {:name '~domain-name
-                                      DEFAULTS (map->CruxDefaults {})})
+     (create-domain {:name ~domain-name}
        ~@body)))
 
 (defn -quote-or-unquote-fields-form [fields owner]
@@ -98,14 +118,17 @@
             (format "Crux: Illegal fields def '%s' for %s"
                     fields owner)))))
 
+
+
 (defmacro entity [domain-spec
                   entity-name entity-fields & body]
   (let [fields (-quote-or-unquote-fields-form entity-fields entity-name)]
     `(let [entity-spec# (map->EntitySpec {DEFAULTS (DEFAULTS ~domain-spec)
                                           :name ~(name entity-name)
                                           FIELDS ~fields})]
-       (update-in ~domain-spec [ENTITIES] assoc '~entity-name
-                  (-> entity-spec# ~@body -validate-spec)))))
+       (-> ~domain-spec
+           (update-in [ENTITIES] assoc '~entity-name
+                      (-> entity-spec# ~@body -validate-spec))))))
 
 (defn- throw-aready-declared-error [declaration-type sym owner-type owner]
   (throw+
@@ -147,7 +170,8 @@
                                             (:name entity-spec)))
         fn-form `(fn ~validator-fn-symbol
                    [validator-args#]
-                   (let [{:keys [~(symbol "event")
+                   (let [~(symbol "check") crux.domain/check
+                         {:keys [~(symbol "event")
                                  ~(symbol "entity")
                                  ~(symbol "user")]} validator-args#
                                  entity-properties# (CRUX-PROPERTIES
@@ -329,6 +353,8 @@
 
 (defn first-unmet-validation [validation-args validation-forms+vfns]
   (first (unmet-validations validation-args validation-forms+vfns)))
+
+
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
