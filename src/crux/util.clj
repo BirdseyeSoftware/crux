@@ -12,6 +12,10 @@
   (into {} (for [[k v] m]
              [(modifier-fn k) v])))
 
+(defn create-multi-fn [multifn-name dispatch-fn]
+  (new clojure.lang.MultiFn (name multifn-name) dispatch-fn
+       :default #'clojure.core/global-hierarchy))
+
 (defn addmethod-to-multi
   [multifn dispatch-val fn]
   (. multifn addMethod dispatch-val fn))

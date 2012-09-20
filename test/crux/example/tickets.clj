@@ -29,7 +29,7 @@
  (create-domain {:name "tickets-domain"}
   (field-types {user-id :User
                 name :String})
-
+ 
 
   (entity User [first last email]
           (id-field oid :Guid)
@@ -60,13 +60,13 @@
       (merge (filter second event))]
 
      [Assigned Assign [assignee]
-      {:constraints [ok?]
+      {:entity-constraints [ok?]
        :conflict-detector nil
        :validations [(check
                       (open? entity)
                       ;(prop (get-entity 'User assignee) :active?)
                       "Assignee must be active user")]}
-      (merge event)]
+      (merge {:ok (ok? entity)} event)]
 
      [Read Read [user-id]
       (update-in [:read-by] conj user-id)

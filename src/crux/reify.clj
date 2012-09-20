@@ -151,15 +151,23 @@
     
     (doseq [[event-symbol event-spec] events]
       (let [event-rec-symbol
-             (symbol (format "%s%s" entity-symbol event-symbol))
+            (symbol (format "%s%s" entity-symbol event-symbol))
             reducer-fn (REDUCER event-spec)
+            
+            ;; reducer-fn (fn [ent ev]
+            ;;              (reducer-fn
+            ;;               ent
+            ;;               (vary-meta ev assoc
+            ;;                          CRUX-PROPERTIES
+            ;;                          (CRUX-PROPERTIES (meta ent)))))
+            
             record-map (get-in domain-spec
                                [:crux.reify/records event-rec-symbol])]
         (when-not reducer-fn
           (throw+ {:type :library/specify-reducer-error
                    :msg ""}))
         (addmethod-to-multi
-         multifn (:record-class record-map) (REDUCER event-spec))))
+         multifn (:record-class record-map) reducer-fn)))
     (update-in domain-spec [:crux.reify/reducers]
                assoc entity-symbol multifn)))
 
