@@ -12,6 +12,9 @@
   (when (not validation-value)
     error-msg))
 
+(defn crux-properties-for-entity [entity]
+  (CRUX-PROPERTIES (meta entity)))
+
 (defprotocol ICruxSpec
   (-validate-spec [this]))
 
@@ -162,6 +165,8 @@
              event-symbol)})))
 
 
+
+
 (defn gen-single-command-validator [entity-spec event-spec form]
   (let [property-symbols (keys (PROPERTIES entity-spec))
         event-fields (FIELDS event-spec)
@@ -174,7 +179,7 @@
                          {:keys [~(symbol "event")
                                  ~(symbol "entity")
                                  ~(symbol "user")]} validator-args#
-                                 entity-properties# (CRUX-PROPERTIES
+                                 entity-properties# (crux-properties-for-entity
                                                      ~(symbol "entity"))
                                  {:keys [~@property-symbols]}
                                  (into {} (for [[k# v#] entity-properties#]
@@ -194,7 +199,7 @@
   (let [property-symbols (keys (PROPERTIES entity-spec))
         fn-form `(fn constraint-checker [entity#]
                    (let [~(symbol "entity") entity#
-                         entity-properties# (CRUX-PROPERTIES entity#)
+                         entity-properties# (crux-properties-for-entity entity#)
                          {:keys [~@property-symbols]}
                          (into {} (for [[k# v#] entity-properties#]
                                     [(keyword k#) v#]))]

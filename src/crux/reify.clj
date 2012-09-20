@@ -63,8 +63,9 @@
         crux-meta-fields {CRUX-PROPERTIES properties}
         defrecord-map (assoc defrecord-map
                         :record-ctor
-                        (fn [m] (orig-ctor
-                                 (merge crux-meta-fields m))))]
+                        (fn [m] (vary-meta
+                                 (orig-ctor m)
+                                 merge crux-meta-fields)))]
     (-> domain-spec
         (update-in [ENTITIES entity-symbol] merge defrecord-map)
         (add-constructor-and-records-to-domain-spec

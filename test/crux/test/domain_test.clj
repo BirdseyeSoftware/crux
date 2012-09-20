@@ -86,8 +86,10 @@ removed. The temporary namespace will 'refer' clojure.core."
     (binding [*data-readers* data-readers]
       (doseq [test-map (read-file fpath)]
         (let [{entity-symbol :entity
-               :keys [initial events expected]} test-map  
+               :keys [name initial events expected]} test-map  
               entity-ctor (get-in domain-spec [:crux.reify/constructors entity-symbol])
               entity-reducer (get-in domain-spec [:crux.reify/reducers entity-symbol])
               entity0 (or initial (entity-ctor {}))]
+          (is (contains? (meta entity0) :crux/properties), (meta entity0))
+          (is (nil? (:crux/properties entity0)))
           (assert-reduction entity-reducer entity0 events expected))))))
