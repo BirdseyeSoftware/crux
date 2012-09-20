@@ -10,7 +10,7 @@
 
 {:entity User
  :name "User test 1"
- :initial #tickets/User {:first "Tavis"}
+ :initial {:first "Tavis"}
  :events [
           #tickets/UserLocked {:why "Because he drinks to much coffee"}
           ]
@@ -18,6 +18,13 @@
 
 {:entity Ticket
  :name "Ticket test2"
- :initial #tickets/Ticket {:title "Already here"}
+ :initial {:title "Already here"}
  :events [#tickets/TicketDetailsChanged {:body "lies under the sea"}]
  :expected {:assignee nil :title "Already here"}}
+
+{:entity Ticket
+ :name "Ticket command 1"
+ :initial #tickets/Ticket {:status :closed}
+ :command #tickets/AssignTicket {:assignee 123}
+ :failure true
+ }
