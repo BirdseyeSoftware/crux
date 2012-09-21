@@ -52,6 +52,10 @@ removed. The temporary namespace will 'refer' clojure.core."
       (-> (tickets/build-test-domain-spec)
           reify-domain-spec!))))
 
+(deftest test-get+set-entity-on-refied-domain
+  (let [])
+  )
+
 (defn -read-file
   ;; see https://github.com/jonase/kibit/blob/master/src/kibit/check.clj
   "Gen a lazy sequence of top level forms from a LineNumberingPushbackReader"
@@ -166,18 +170,33 @@ removed. The temporary namespace will 'refer' clojure.core."
 
     ))
 
-(deftest read-events-from-file
+
+(defn read-domain-data-from-file
+  "Returns a seq of top level clojure data forms from the file. If the
+  data includes any (def)records that were declared on the
+  domain-spec (commands, events, entities, etc.) they should be in
+  clojure `data-readers` format with the reader-prefix as the
+  namespace on the reader tag and the symbol of the record on the
+  second part of the reader tag: e.g. #tickets/Ticket{},
+  #tickets/TicketAssigned{}"
+
+  [domain-spec reader-prefix fpath]
+  (binding [*data-readers* (get-domain-data-readers domain-spec reader-prefix)]
+    (doall (read-file fpath))))
+
+
+
+
+(deftest test-read-events-from-file
   (let [fpath "test/crux/example/tickets_sample_events1.clj"
         domain-spec (tickets/build-reified-test-domain-spec)
-        data-readers (get-domain-data-readers domain-spec 'tickets)
-        ;; _ (println (keys (get-in domain-spec [:crux.reify/constructors])))
-        ]
-    (binding [*data-readers* data-readers]
-      (doseq [test-map (read-file fpath)]
-        (let [{entity-symbol :entity
-               :keys [name initial events command expected]} test-map]
-          (cond
-            (and events command)
-            (throw+ (format "Specify just events or command on %s" name))
-            events (-perform-event-test test-map domain-spec)
-            command (-perform-command-test test-map domain-spec)))))))
+        data-readers (get-domain-data-readers domain-spec 'tickets)]
+    (doseq [test-map (read-domain-data-from-file
+                      domain-spec 'tickets fpath)]
+      (let [{entity-symbol :entity
+             :keys [name initial events command expected]} test-map]
+        (cond
+          (and events command)
+          (throw+ (format "Specify just events or command on %s" name))
+          events (-perform-event-test test-map domain-spec)
+          command (-perform-command-test test-map domain-spec))))))
