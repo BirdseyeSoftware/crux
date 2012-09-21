@@ -1,10 +1,13 @@
 (ns crux.domain
+  (:require [clojure.set :as set])
   (:require [crux.internal.keys :refer :all])
   (:require [slingshot.slingshot :refer (throw+)])
   (:require [crux.util
              :refer [eval-with-meta
                      unquoted?
                      map-over-keys
+                     create-multi-fn
+                     addmethod-to-multi
                      defrecord-dynamically
                      defrecord-keep-meta]]))
 
@@ -19,30 +22,30 @@
 ;; TODO
 (declare add-map-of-command->events-to-domain-spec)
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(defn- throw-aready-declared-error [declaration-type sym owner-type owner]
+  (throw+
+   (java.lang.IllegalArgumentException.
+    (format "Crux: %s '%s' already declared for %s '%s'"
+            declaration-type sym owner-type owner))))
+
+(defn- throw-reduce-forms-required-error [event-symbol]
+  (throw+
+   (java.lang.IllegalArgumentException.
+    (format "Crux: %s '%s' requires a reduce form"
+            event-symbol))))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; Core DDL Record types
+
+;;; NOTE! The :type meta declared below is for documentation / UI
+;;; building purposes. It has nothing to do with java type hinting.
+;;; Also note, we haven't started using them yet and they have
+;;; probably gotten out of sync with the rest of the code.
+
 (defprotocol ICruxSpec
   (-validate-spec [this]))
 
-(defrecord-keep-meta CruxDefaults
-    [^{:type map.of.Symbol->AbstractFieldType} field-types
-     ^{:type list.of.Fn->AbstractFieldType} type-inference-rules])
-
-(defrecord-keep-meta EventReductionSpec
-    [^{:type :Keyword} name
-     ^{:type :variable} args])
-
-(defrecord-keep-meta EventSpec
-    [^{:type Symbol} name
-     ^{:type list.of.Symbol} fields
-     ^{:type list.of.EventReductionSpec} reduce-forms
-     ^{:type Fn } reducer
-     ^{:type CruxDefaults} defaults
-     ])
-
-(defrecord-keep-meta CommandSpec
-    [^{:type Symbol} name
-     ^{:type list.of.Symbol} fields
-     ^{:type CruxDefaults} defaults
-     ])
 
 (defn -validate-entity-spec [entity-spec]
   (when-not (and (vector? (FIELDS entity-spec))
@@ -56,19 +59,6 @@
                :msg (str event-map)})))
   entity-spec)
 
-(defrecord-keep-meta EntitySpec
-    [^{:type Symbol} name
-     ^{:type Symbol} plural-name
-     ^{:type CruxDefaults} defaults
-     ^{:type Map} id-field
-     ^{:type list.of.Symbol} fields
-     ^{:type list.of.EntityProperty} properties
-     ^{:type map.of.Symbol->EventSpec} events
-     ^{:type map.of.Symbol->CommandSpec} commands]
-
-  ICruxSpec
-  (-validate-spec [this] (-validate-entity-spec this)))
-
 (defn -validate-domain-spec [domain-spec]
   ;; it's better to do this in each of the macros so the error
   ;; reporting is closer to the original source of the error
@@ -76,18 +66,52 @@
     (-validate-spec entity-spec))
   domain-spec)
 
+
+(defrecord-keep-meta CruxDefaults
+    [^{:type map.of.Symbol->AbstractFieldType} field-types
+     ^{:type [[Fn, AbstractFieldType]]} type-inference-rules])
+
+(defrecord-keep-meta EventReductionSpec
+    [^{:type :Keyword} name
+     ^{:type :variable} args])
+
+(defrecord-keep-meta EventSpec
+    [^{:type Symbol} name
+     ^{:type [Symbol]} fields
+     ^{:type [EventReductionSpec]} reduce-forms
+     ^{:type Fn } reducer
+     ^{:type CruxDefaults} defaults
+     ])
+
+(defrecord-keep-meta CommandSpec
+    [^{:type Symbol} name
+     ^{:type [Symbol]} fields
+     ^{:type CruxDefaults} defaults
+     ])
+
+(defrecord-keep-meta EntitySpec
+    [^{:type Symbol} name
+     ^{:type Symbol} plural-name
+     ^{:type CruxDefaults} defaults
+     ^{:type Map} id-field
+     ^{:type [Symbol]} fields
+     ^{:type ['EntityProperty]} properties
+     ^{:type map.of.Symbol->EventSpec} events
+     ^{:type map.of.Symbol->CommandSpec} commands]
+
+  ICruxSpec
+  (-validate-spec [this] (-validate-entity-spec this)))
+
 (defrecord DomainSpec
     [^{:type Symbol} name
      ^{:type CruxDefaults} defaults
-     ^{:type map.of.Symbol->EntitySpec} entities
-     ;; event-records: crux.reify/blah
-     ;; event-store: crux.reify.savant
-     ^{:type '{Symbol Symbol}} reifications]
+     ^{:type {Symbol EntitySpec}} entities
+     ^{:type {Symbol Symbol}} reifications]
 
   ICruxSpec
   (-validate-spec [this] (-validate-domain-spec this)))
 
-;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; Crux DDL: minor fns/macros
 
 (defn -ensure-is-crux-domain-spec [m]
@@ -128,8 +152,7 @@
 
 
 
-(defmacro entity [domain-spec
-                  entity-name entity-fields & body]
+(defmacro entity [domain-spec entity-name entity-fields & body]
   (let [fields (-quote-or-unquote-fields-form entity-fields entity-name)]
     `(let [entity-spec# (map->EntitySpec {DEFAULTS (DEFAULTS ~domain-spec)
                                           :name ~(name entity-name)
@@ -139,89 +162,76 @@
            (update-in [ENTITIES] assoc '~entity-name
                       (-> entity-spec# ~@body -validate-spec))))))
 
-(defn- throw-aready-declared-error [declaration-type sym owner-type owner]
-  (throw+
-   (java.lang.IllegalArgumentException.
-    (format "Crux: %s '%s' already declared for %s '%s'"
-            declaration-type sym owner-type owner))))
-
-(defn- throw-reduce-forms-required-error [event-symbol]
-  (throw+
-   (java.lang.IllegalArgumentException.
-    (format "Crux: %s '%s' requires a reduce form"
-            event-symbol))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; entity/event/command properties (unary functions)
 
-(defmulti gen-property-fn (fn [spec sym properties-map form] (type spec)))
-(defmethod gen-property-fn EntitySpec [spec sym properties-map form]
-  ;; NOTE: Allow the entity# record to have a CRUX-PROPERTIES and that
-  ;; would be a map of {Sym Fn}
-  (let [property-symbols (keys properties-map)
-        entity-symbol (ENTITY-SYMBOL spec)]
-      (eval-with-meta
-        `(fn ~sym [entity#]
-           (let [{:keys [~@(FIELDS spec)]} entity#
-                 ~(symbol "entity") entity#
+(defn gen-property-fn
+  [name-of-local-symbol fields property-sym all-property-symbols form]
+  (eval-with-meta
+    `(fn ~property-sym [entity-or-event#]
+       (let [{:keys [~@fields]} entity-or-event#
+             ~(symbol name-of-local-symbol) entity-or-event#
 
-                 {:keys [~@property-symbols]}
-                 (map-over-keys
-                  keyword (crux-properties-from-meta
-                           ~(symbol "entity")))
-                 
-                 ]
-             ~form))
-        {:doc (format "Property %s generated by crux for %s"
-                      sym entity-symbol)
-         :crux/generated-by 'crux.domain/gen-property-fn})))
+             {:keys [~@all-property-symbols]}
+             (map-over-keys keyword (crux-properties-from-meta
+                                     ~(symbol name-of-local-symbol)))]
+         ~form))
+    {:doc (format "Property %s generated by crux" property-sym )
+     :crux/generated-by 'crux.domain/gen-property-fn}))
 
-(defmethod gen-property-fn EventSpec [event-spec sym properties-map form]
-  ;; NOTE: Allow the event# record to have a CRUX-PROPERTIES and that
-  ;; would be a map of {Sym Fn}
-  (let [event-symbol (EVENT-SYMBOL event-spec)
-        property-symbols (keys properties-map)]
-    (eval-with-meta
-      `(fn ~sym [event#]
-         (let [{:keys [~@(FIELDS event-spec)]} event#
-               ~(symbol "event") event#
+(defn -property-dispatch-function [entity-or-event]
+  (symbol (.getSimpleName (type entity-or-event))))
 
-               {:keys [~@property-symbols]}
-               (map-over-keys
-                keyword (crux-properties-from-meta
-                         ~(symbol "event")))]
-           ~form))
-      {:doc (format "Property %s generated by crux for %s"
-                    sym event-symbol)
-       :crux/generated-by 'crux.domain/gen-property-fn})))
+(defn create-property-multifns [existing-multifns-map new-property-forms-map]
+  (let [new-keys (set/difference (set (keys new-property-forms-map))
+                                 (set (keys existing-multifns-map)))
+        new-multifns-map (into {}
+                           (for [k new-keys]
+                             [k (create-multi-fn k -property-dispatch-function)]))]
+    (merge existing-multifns-map new-multifns-map)))
+
+(defn add-methods-to-properties [entity-spec
+                                 dispatch-value
+                                 name-of-local-symbol ; "event" or "entity"
+                                 fields
+                                 property-forms-map]
+  (let [existing-property-multifns (PROPERTIES entity-spec)
+        property-fns-map
+        (into {}
+              (for [[property-sym form] property-forms-map]
+                [property-sym
+                 (gen-property-fn
+                  name-of-local-symbol
+                  fields
+                  property-sym
+                  (keys (PROPERTIES entity-spec)) form)]))]
+    (doseq [[property-sym pfn] property-fns-map]
+      (addmethod-to-multi (existing-property-multifns property-sym)
+                          dispatch-value pfn)))
+  entity-spec)
+
+(defn add-property-forms [entity-spec property-forms-map & [event-spec]]
+  (if event-spec
+    (update-in entity-spec [EVENTS (EVENT-SYMBOL event-spec)
+                            PROPERTY-FORMS]
+               merge property-forms-map)
+    (update-in entity-spec [PROPERTY-FORMS] merge property-forms-map)))
 
 
-#_(defn properties-on-event* [entity-spec event-symbol properties-map]
-  (-> entity-spec
-      (update-in [PROPERTY-FORMS] merge properties-map)
-      ;; first declare them so props can use other props
-
-      (update-in [PROPERTIES] merge properties-map)
-      ;; then define them
-      (update-in [PROPERTIES] merge 
-                 (into {}
-                       (for [[sym form] properties-map]
-                         [sym (gen-property-fn
-                               spec
-                               sym properties-map form)])))))
-
-(defn properties* [entity-spec properties-map]
-  (-> entity-spec
-      (update-in [PROPERTY-FORMS] merge properties-map)
-      ;; first declare them so props can use other props
-      (update-in [PROPERTIES] merge properties-map)
-      ;; then define them
-      (update-in [PROPERTIES] merge 
-                 (into {}
-                       (for [[sym form] properties-map]
-                         [sym (gen-property-fn
-                               entity-spec
-                                sym properties-map form)])))))
+(defn properties*
+  ([entity-spec property-forms-map & [event-spec]]
+     (let [name-of-local-symbol (if event-spec "event" "entity")
+           fields (FIELDS (or event-spec entity-spec))
+           dispatch-value (if event-spec
+                            (EVENT-SYMBOL event-spec)
+                            (ENTITY-SYMBOL entity-spec))]
+       (-> entity-spec
+           (add-property-forms property-forms-map event-spec)
+           ;; (update-in [PROPERTY-FORMS] merge property-forms-map)
+           (update-in [PROPERTIES] create-property-multifns property-forms-map)
+           (add-methods-to-properties
+            dispatch-value name-of-local-symbol fields property-forms-map)))))
 
 (defmacro properties [entity-spec & property-pairs]
   ;;TODO: normalize property-pairs
@@ -261,7 +271,7 @@
              event-symbol)})))
 
 (defn add-reducer-to-event-spec [entity-spec event-symbol]
-  
+
   (let [event-spec (get-in entity-spec [EVENTS event-symbol])
         entity-symbol (ENTITY-SYMBOL entity-spec)
         reducer (gen-event-reducer
@@ -287,7 +297,7 @@
                                  (map-over-keys
                                   keyword (crux-properties-from-meta
                                            ~(symbol "entity")))
-                                 
+
                                  {:keys [~@event-fields]} ~(symbol "event")]
                      (-> validator-args#
                          ~form)))]
@@ -320,9 +330,10 @@
 
 (defn add-properties-from-event-spec [entity-spec event-symbol]
   (let [event-spec (get-in entity-spec [EVENTS event-symbol])
-        properties-map (get-in event-spec [ADDITIONAL-EVENT-ATTRS PROPERTIES])]
-    (if properties-map
-      (update-in entity-spec [EVENTS event-symbol] properties* properties-map)
+        property-forms-map (get-in event-spec [ADDITIONAL-EVENT-ATTRS PROPERTIES])]
+    (if property-forms-map
+      (properties* entity-spec property-forms-map event-spec)
+      ;; (update-in entity-spec [EVENTS event-symbol] properties* property-forms-map)
       entity-spec)))
 
 (defn add-full-names-for-event-and-command-on-event-spec
@@ -344,7 +355,7 @@
 (defn add-command-to-event-spec [entity-spec event-symbol]
   (let [entity-symbol (ENTITY-SYMBOL entity-spec)
         event-spec (get-in entity-spec [EVENTS event-symbol])
-        ;; 
+        ;;
         command-constraint-forms (get-in event-spec
                                          [ADDITIONAL-EVENT-ATTRS CONSTRAINTS])
         ;; Generate function bindings from the forms given
@@ -474,4 +485,3 @@
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
