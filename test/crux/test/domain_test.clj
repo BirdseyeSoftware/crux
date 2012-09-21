@@ -156,7 +156,6 @@ removed. The temporary namespace will 'refer' clojure.core."
 
     #_(println command-symbol event-symbol command
              (get-in domain-spec [:crux.reify/commands-to-events]))
-
     (is true)
     ;; 1 get event-spec from command type
     ;; 2 get constraints, conflict-checker, validator
