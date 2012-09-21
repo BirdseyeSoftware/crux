@@ -13,7 +13,7 @@
   [domain-spec record-symbol record-map]
   (-> domain-spec
       (update-in [:crux.reify/records]
-                 assoc record-symbol record-map) 
+                 assoc record-symbol record-map)
       (update-in [:crux.reify/constructors]
                  assoc record-symbol (:record-ctor record-map))))
 
@@ -47,7 +47,7 @@
                    (map-over-keys #(format "%s-%s"
                                            (name command-or-event-keyword)
                                            (name %))
-                                  record-map))        
+                                  record-map))
         (add-constructor-and-records-to-domain-spec
              command-or-event-rec-symbol record-map))))
 
@@ -82,10 +82,8 @@
 
 (defn reify-events-or-commands-for-each-entity! [domain-spec]
   (let [entity-symbols (keys (ENTITIES domain-spec))
-        reduce-arguments (concat (map #(do [% :event])
-                                      entity-symbols)
-                                 (map #(do [% :command])
-                                      entity-symbols))]
+        reduce-arguments (concat (map #(do [% :event]) entity-symbols)
+                                 (map #(do [% :command]) entity-symbols))]
     (reduce reify-event-or-command-records-for-entity! domain-spec
             reduce-arguments)))
 
@@ -107,7 +105,7 @@
 ;;                  (assoc entity-cache-map entity-id entity-atom)
 ;;                  entity-cache-map))))
 ;;     (throw+ (format "Entity `%s` not defined in domain" entity-symbol)))
-  
+
 ;;   #_(swap! (get-in domain-spec [:entity-caches-map entity-symbol])
 ;;            (fn [entity-cache-map]
 ;;              (if-let [entity-atom (get entity-cache-map entity-id)]
@@ -124,9 +122,8 @@
   (let [entity-caches-map (map-over-values (constantly (atom {}))
                                            (ENTITIES domain-spec))]
     (-> domain-spec
-        (assoc :entity-caches-map entity-caches-map)
-        (assoc 
-            :crux/get-entity
+        (assoc :crux.reify/entity-caches-map entity-caches-map)
+        (assoc :crux.reify/get-entity
           (fn get-entity-fn [entity-symbol entity-id #_rev]
             (let [entity-cache-atom (get entity-caches-map entity-symbol)
                   entity-atom (get @entity-cache-atom entity-id)]
@@ -148,19 +145,11 @@
         multifn-var (eval `(defmulti ~multi-name
                              (fn [entity# event#] (type event#))))
         multifn (eval `~multi-name)]
-    
+
     (doseq [[event-symbol event-spec] events]
       (let [event-rec-symbol
             (symbol (format "%s%s" entity-symbol event-symbol))
             reducer-fn (REDUCER event-spec)
-            
-            ;; reducer-fn (fn [ent ev]
-            ;;              (reducer-fn
-            ;;               ent
-            ;;               (vary-meta ev assoc
-            ;;                          CRUX-PROPERTIES
-            ;;                          (CRUX-PROPERTIES (meta ent)))))
-            
             record-map (get-in domain-spec
                                [:crux.reify/records event-rec-symbol])]
         (when-not reducer-fn
@@ -180,5 +169,3 @@
       reify-domain-records!
       reify-get-entity-function
       reify-all-entity-event-reducers!))
-
-
