@@ -184,7 +184,25 @@ removed. The temporary namespace will 'refer' clojure.core."
   (binding [*data-readers* (get-domain-data-readers domain-spec reader-prefix)]
     (doall (read-file fpath))))
 
+(defn build-entity-from-test-map [domain-spec test-map]
+  (let [{entity-symbol :entity
+         :keys [initial events expected]} test-map
+        entity-ctor (get-in domain-spec [:crux.reify/constructors entity-symbol])
+        entity-reducer (get-in domain-spec [:crux.reify/reducers entity-symbol])]
+    (entity-ctor (or initial {}))))
 
+(deftest test-get+set-entity-on-reified-domain
+  (let [fpath "test/crux/example/tickets_sample_events1.clj"
+        domain-spec (tickets/build-reified-test-domain-spec)
+        data-readers (get-domain-data-readers domain-spec 'tickets)
+        test-map (first
+                  (read-domain-data-from-file domain-spec 'tickets fpath))
+        entity0 (build-entity-from-test-map domain-spec test-map)
+        get-entity (:crux.reify/get-entity domain-spec)
+        set-entity (:crux.reify/set-entity domain-spec)]
+
+    (set-entity 'Ticket 1 entity0)
+    (is (= entity0 (get-entity 'Ticket 1)))))
 
 
 (deftest test-read-events-from-file
