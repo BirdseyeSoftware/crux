@@ -22,6 +22,7 @@ namespaces other than the current one."
      ~@(map (fn [form] `(eval '~form)) body)))
 
 
+
 (defmacro with-test-ns
   "Evaluates body in an anonymous namespace, which is then immediately
 removed. The temporary namespace will 'refer' clojure.core."
@@ -106,7 +107,7 @@ removed. The temporary namespace will 'refer' clojure.core."
 ;;                                                     :event command
 ;;                                                     :user nil}
 ;;                                                    validations)
-           
+
 ;;               reducer (REDUCER assigned-event-spec)]
 ;;           (when-not (empty? constraint-result)
 ;;             (throw+

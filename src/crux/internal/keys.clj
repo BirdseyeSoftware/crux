@@ -1,5 +1,6 @@
 (ns crux.internal.keys)
 
+
 ;;; keywords used on entity meta at runtime
 (defonce CRUX-PROPERTIES :crux/properties)
 
@@ -28,5 +29,3 @@
 (defonce COMMAND-CONSTRAINTS :command-constraints)
 (defonce COMMAND-VALIDATORS :command-validators)
 (defonce ID-FIELD :id-field)
-
-

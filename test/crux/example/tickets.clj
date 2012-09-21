@@ -29,7 +29,7 @@
  (create-domain {:name "tickets-domain"}
   (field-types {user-id :User
                 name :String})
- 
+
 
   (entity User [first last email]
           (id-field oid :Guid)
@@ -95,4 +95,3 @@
       reify-domain-spec!))
 
 ;(build-test-domain-spec)
-
