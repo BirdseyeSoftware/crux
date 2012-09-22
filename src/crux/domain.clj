@@ -185,10 +185,10 @@
     (merge existing-multifns-map new-multifns-map)))
 
 (defn- -add-methods-to-properties [entity-spec
-                                 dispatch-value
-                                 name-of-local-symbol ; "event" or "entity"
-                                 fields
-                                 property-forms-map]
+                                   dispatch-value
+                                   name-of-local-symbol ; "event" or "entity"
+                                   fields
+                                   property-forms-map]
   (let [existing-property-multifns (PROPERTIES entity-spec)
         property-fns-map
         (into {}
@@ -217,7 +217,7 @@
      (let [name-of-local-symbol (if event-spec "event" "entity")
            fields (FIELDS (or event-spec entity-spec))
            dispatch-value (if event-spec
-                            (EVENT-SYMBOL event-spec)
+                            (FULL-EVENT-SYMBOL event-spec)
                             (ENTITY-SYMBOL entity-spec))]
        (-> entity-spec
            (-add-property-forms property-forms-map event-spec)
