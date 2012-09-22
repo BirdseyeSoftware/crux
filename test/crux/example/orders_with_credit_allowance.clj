@@ -15,8 +15,8 @@
 
     (events
       [Created Create entity-fields
-       (merge {credit-allowance 1000
-               outstanding-balance 0}
+       (merge {:credit-allowance 1000
+               :outstanding-balance 0}
               (filter second event))]
 
       [BalancePaid PayBalance [amount]
@@ -24,8 +24,8 @@
 
       [OrderPlaced PlaceOrder [product unit-price qty]
        {:entity-constraints [has-credit?]
-        :properties {order-total (* (:qty event) (:unit-price event))}
-        :validations [(check )]}
-       (update-in [:outstanding-balance] + 100
-                  ;; (order-total event)
-                  )])))
+        :properties {order-total (* (:qty event) (:unit-price event))}}
+       (update-in [:outstanding-balance] + (order-total event))])))
+
+(defn build-reified-test-domain-spec []
+  (reify-domain-spec! orders))

@@ -5,6 +5,9 @@
             [slingshot.slingshot :refer [throw+]]
 
             [crux.example.tickets :as tickets]
+            [crux.example.orders-with-credit-allowance
+             :as orders]
+
             [crux.domain :as domain]
             [crux.internal.keys :refer :all]
             [crux.util :refer [submap?
@@ -172,11 +175,24 @@
                  (reduce reduction-test entity0 events)))))
 
 
-(deftest test-read-events-from-file
+(deftest test-ticket-events-from-file
   (let [file-path "test/crux/example/tickets_sample_events1.clj"
         domain-spec (tickets/build-reified-test-domain-spec)]
     (doseq [test-map (read-domain-data-from-file
                       domain-spec file-path 'tickets)]
+      (let [{entity-symbol :entity
+             :keys [name initial events command expected]} test-map]
+        (cond
+          (and events command)
+          (throw+ (format "Specify just events or command on %s" name))
+          events (-perform-event-test test-map domain-spec)
+          command (-perform-command-test test-map domain-spec))))))
+
+(deftest test-order-events-from-file
+  (let [file-path "test/crux/example/orders_test_specs.clj"
+        domain-spec (orders/build-reified-test-domain-spec)]
+    (doseq [test-map (read-domain-data-from-file
+                      domain-spec file-path 'orders)]
       (let [{entity-symbol :entity
              :keys [name initial events command expected]} test-map]
         (cond
