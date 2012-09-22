@@ -1,15 +1,18 @@
 (ns crux.reify
   (:require [slingshot.slingshot :refer [throw+]])
   (:require [crux.internal.keys :refer :all])
-  (:require [crux.util :refer [defrecord-dynamically
-                               addmethod-to-multi
-                               map-over-keys map-over-values]]))
+  (:require [crux.util :refer
+             [defrecord-dynamically
+              addmethod-to-multi
+              map-over-keys
+              map-over-values
+              read-forms-from-file]]))
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; Crux Reification code:
-;;; abstract-spec -> real records, fns, protos/interfaces, etc.
+;;; abstract-spec -> real records, event reduction multifns,
+;;; data-readers, etc.
 
-(defn add-constructor-and-records-to-domain-spec
+(defn -add-constructor-and-records-to-domain-spec
   [domain-spec record-symbol record-map]
   (-> domain-spec
       (update-in [:crux.reify/records]
@@ -17,50 +20,42 @@
       (update-in [:crux.reify/constructors]
                  assoc record-symbol (:record-ctor record-map))))
 
-(defn add-command-to-event-mapping [domain-spec command-symbol event-symbol]
+(defn -add-command-to-event-mapping [domain-spec command-symbol event-symbol]
   (update-in domain-spec [:crux.reify/commands-to-events]
              assoc command-symbol event-symbol))
 
-;; fugly, refactor
-(defn reify-event-or-command-record-for-entity-event!
-  [domain-spec [entity-symbol event-symbol command-or-event-keyword]]
-  (let [event-spec (get-in domain-spec [ENTITIES entity-symbol
-                                        EVENTS event-symbol])
-        command-or-event-rec-symbol
-        ;;TODO: make this naming a configurable callback in the entity-map
-        (symbol (case command-or-event-keyword
-                  :event (format "%s%s" entity-symbol event-symbol)
-                  :command (format "%s%s"
-                                   (COMMAND-SYMBOL event-spec)
-                                   entity-symbol)))
+(defn -reify-event-and-command!
+  [domain-spec event-spec]
+  (let [{:keys [entity-symbol event-symbol]} event-spec
         fields (FIELDS event-spec)
-        record-map (defrecord-dynamically
-                     command-or-event-rec-symbol fields)
-        domain-spec (if (= :command command-or-event-keyword)
-                      (add-command-to-event-mapping
-                       domain-spec (COMMAND-SYMBOL event-spec)
-                       event-symbol)
-                      domain-spec)]
+
+        full-command-symbol (FULL-COMMAND-SYMBOL event-spec)
+        command-record-map (defrecord-dynamically
+                             full-command-symbol fields)
+
+
+        full-event-symbol (FULL-EVENT-SYMBOL event-spec)
+        event-record-map (defrecord-dynamically
+                           full-event-symbol fields)]
     (-> domain-spec
-        (update-in [ENTITIES entity-symbol EVENTS event-symbol]
-                   merge
-                   (map-over-keys #(format "%s-%s"
-                                           (name command-or-event-keyword)
-                                           (name %))
-                                  record-map))
-        (add-constructor-and-records-to-domain-spec
-             command-or-event-rec-symbol record-map))))
+        (-add-command-to-event-mapping (COMMAND-SYMBOL event-spec) event-symbol)
+        (-add-command-to-event-mapping FULL-COMMAND-SYMBOL FULL-EVENT-SYMBOL)
 
-(defn reify-event-or-command-records-for-entity!
-  [domain-spec [entity-symbol command-or-event-keyword]]
-  (let [entity-spec (get-in domain-spec [ENTITIES entity-symbol])
-        record-symbols (keys (EVENTS entity-spec))
-        reduce-inputs (map #(do [entity-symbol % command-or-event-keyword])
-                           record-symbols)]
-    (reduce reify-event-or-command-record-for-entity-event!
-            domain-spec reduce-inputs)))
+        (-add-constructor-and-records-to-domain-spec
+         full-command-symbol command-record-map)
 
-(defn reify-entity-record! [domain-spec entity-symbol]
+        (-add-constructor-and-records-to-domain-spec
+         full-event-symbol event-record-map))))
+
+(defn -reify-events-and-commands-for-each-entity! [domain-spec]
+  (reduce -reify-event-and-command!
+          domain-spec
+          (flatten (map #(vals (EVENTS %))
+                        (vals (ENTITIES domain-spec))))))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(defn -reify-entity-record! [domain-spec entity-symbol]
   (let [entity-spec (get-in domain-spec [ENTITIES entity-symbol])
         fields (FIELDS entity-spec)
         properties (PROPERTIES entity-spec)
@@ -74,19 +69,11 @@
                                  merge crux-meta-fields)))]
     (-> domain-spec
         (update-in [ENTITIES entity-symbol] merge defrecord-map)
-        (add-constructor-and-records-to-domain-spec
+        (-add-constructor-and-records-to-domain-spec
             entity-symbol defrecord-map))))
 
-(defn reify-all-entity-records! [domain-spec]
-  (reduce reify-entity-record! domain-spec (keys (ENTITIES domain-spec))))
-
-(defn reify-events-or-commands-for-each-entity! [domain-spec]
-  (let [entity-symbols (keys (ENTITIES domain-spec))
-        reduce-arguments (concat (map #(do [% :event]) entity-symbols)
-                                 (map #(do [% :command]) entity-symbols))]
-    (reduce reify-event-or-command-records-for-entity! domain-spec
-            reduce-arguments)))
-
+(defn -reify-all-entity-records! [domain-spec]
+  (reduce -reify-entity-record! domain-spec (keys (ENTITIES domain-spec))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; get-entity / set-entity
@@ -97,7 +84,7 @@
 ;;  ['Entity] (atom {id (atom {})})
 ;; }
 
-(defn reify-get+set-entity-functions [domain-spec]
+(defn -reify-get+set-entity-functions [domain-spec]
   (let [entity-caches-map (map-over-values (constantly (atom {}))
                                            (ENTITIES domain-spec))]
     (-> domain-spec
@@ -131,13 +118,13 @@
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(defn reify-domain-records! [domain-spec]
+(defn -reify-domain-records! [domain-spec]
   (-> domain-spec
-      reify-all-entity-records!
-      reify-events-or-commands-for-each-entity!))
+      -reify-all-entity-records!
+      -reify-events-and-commands-for-each-entity!))
 
 
-(defn reify-entity-event-reducer! [domain-spec entity-symbol]
+(defn -reify-entity-event-reducer! [domain-spec entity-symbol]
   (let [multi-name (symbol (format "%s-event-reducer" entity-symbol))
         events (get-in domain-spec  [ENTITIES entity-symbol EVENTS])
         multifn-var (eval `(defmulti ~multi-name
@@ -158,12 +145,42 @@
     (update-in domain-spec [:crux.reify/reducers]
                assoc entity-symbol multifn)))
 
-(defn reify-all-entity-event-reducers! [domain-spec]
-  (reduce reify-entity-event-reducer!
+(defn -reify-all-entity-event-reducers! [domain-spec]
+  (reduce -reify-entity-event-reducer!
           domain-spec (keys (ENTITIES domain-spec))) )
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; Main public interface
 
 (defn reify-domain-spec! [domain-spec]
   (-> domain-spec
-      reify-domain-records!
-      reify-get+set-entity-functions
-      reify-all-entity-event-reducers!))
+      -reify-domain-records!
+      -reify-get+set-entity-functions
+      -reify-all-entity-event-reducers!))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; tools for using the records reified here
+
+(defn get-domain-data-readers [domain-spec prefix]
+  (map-over-keys
+   #(symbol (format "%s/%s" prefix %))
+   (:crux.reify/constructors domain-spec)))
+
+(defn read-domain-data-from-file
+  "Returns a seq of top level clojure data forms from the file. If the
+  data includes any (def)records that were declared on the
+  domain-spec (commands, events, entities, etc.) they should be in
+  clojure `data-readers` format with the `reader-prefix` as the
+  namespace on the reader tag and the symbol of the record type on the
+  second part of the reader tag.
+
+  e.g. #tickets/Ticket{}, #tickets/TicketAssigned{}"
+
+  [domain-spec file-path & [reader-prefix]]
+  (let [reader-prefix (or reader-prefix (:name domain-spec))]
+    (binding [*data-readers* (get-domain-data-readers
+                              domain-spec reader-prefix)]
+      (doall (read-forms-from-file file-path)))))
+
+(defn read-domain-event-log [domain-spec file-path & [domain-prefix]]
+  (read-domain-data-from-file domain-spec file-path domain-prefix))

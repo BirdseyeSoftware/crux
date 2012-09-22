@@ -1,48 +1,24 @@
 (ns crux.test.domain-test
   (:require [clojure.test :refer :all]
             [clojure.data :refer [diff]]
+            [clojure.pprint :refer [pprint]]
             [slingshot.slingshot :refer [throw+]]
+
             [crux.example.tickets :as tickets]
             [crux.domain :as domain]
             [crux.internal.keys :refer :all]
-            [crux.util :refer [map-over-keys submap?]])
-  (:require [clojure.java.io :refer [input-stream reader]])
-  (:import [crux.domain DomainSpec])
-  (:import [clojure.lang LineNumberingPushbackReader])
-  (:import [java.io File]))
-
-
-;; Stolen from clojure.contrib.with-ns
-(defmacro with-ns
-  "Evaluates body in another namespace. ns is either a namespace
-object or a symbol. This makes it possible to define functions in
-namespaces other than the current one."
-  [ns & body]
-  `(binding [*ns* (the-ns ~ns)]
-     ~@(map (fn [form] `(eval '~form)) body)))
-
-
-
-(defmacro with-test-ns
-  "Evaluates body in an anonymous namespace, which is then immediately
-removed. The temporary namespace will 'refer' clojure.core."
-  [name & body]
-  `(do
-     (when-let [test-ns# (find-ns '~name)]
-       (remove-ns 'test-ns#))
-
-     (create-ns '~name)
-     (let [test-ns# (find-ns '~name)]
-       (let [result# (with-ns '~name
-                       (clojure.core/refer-clojure)
-                       ~@body)]
-         result#))))
+            [crux.util :refer [submap?
+                               with-test-ns]]
+            [crux.reify :refer
+             [get-domain-data-readers
+              read-domain-data-from-file
+              read-domain-event-log]])
+  (:import [crux.domain DomainSpec]))
 
 
 (deftest test-domain-is-built-correctly
   (let [tickets-domain (tickets/build-test-domain-spec)]
     (is (instance? DomainSpec tickets-domain))))
-
 
 (deftest test-reifier-is-building-domain-correctly
   (let [ticket-domain (tickets/build-test-domain-spec)]
@@ -52,45 +28,9 @@ removed. The temporary namespace will 'refer' clojure.core."
       (-> (tickets/build-test-domain-spec)
           reify-domain-spec!))))
 
-(deftest test-get+set-entity-on-refied-domain
-  (let [])
-  )
 
-(defn -read-file
-  ;; see https://github.com/jonase/kibit/blob/master/src/kibit/check.clj
-  "Gen a lazy sequence of top level forms from a LineNumberingPushbackReader"
-  [^LineNumberingPushbackReader r]
-  (lazy-seq
-    (let [form (try
-                 (read r false ::eof)
-                 (catch Exception e
-                   (throw (Exception.
-                           (str "reader crashed"
-                                (.getMessage e)) e))))]
-      (when-not (= form ::eof)
-        (cons form (-read-file r))))))
-
-(defn read-file [file-or-path]
-  (-read-file
-   (LineNumberingPushbackReader. (reader file-or-path))))
-
-(defn get-domain-data-readers [domain-spec prefix]
-  (map-over-keys
-   #(symbol (format "%s/%s" prefix %))
-   (:crux.reify/constructors domain-spec)))
-
-(defn assert-reduction
-  ([reducer-fn init-st events expected-final-st]
-     (let [final (reduce reducer-fn init-st events)]
-       (is (submap? expected-final-st final)))))
-
-(defn -perform-event-test [test-map domain-spec]
-  (let [{entity-symbol :entity
-         :keys [initial events expected]} test-map
-        entity-ctor (get-in domain-spec [:crux.reify/constructors entity-symbol])
-        entity-reducer (get-in domain-spec [:crux.reify/reducers entity-symbol])
-        entity0 (entity-ctor (or initial {}))]
-    (assert-reduction entity-reducer entity0 events expected)))
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; unfinished command handling tests
 
 ;; (defn handle-command-pseudo-code [event-spec command-symbol command]
 ;;     (let [{entity-id :id
@@ -169,48 +109,74 @@ removed. The temporary namespace will 'refer' clojure.core."
     ;; 5 find event-constructor from event-spec and call it with command fields
 
     ))
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;
+(defn assert-reduction
+  ([reducer-fn init-state events expected-final-state]
+     (let [final (reduce reducer-fn init-state events)]
+       (is (submap? expected-final-state final)))))
 
-
-(defn read-domain-data-from-file
-  "Returns a seq of top level clojure data forms from the file. If the
-  data includes any (def)records that were declared on the
-  domain-spec (commands, events, entities, etc.) they should be in
-  clojure `data-readers` format with the reader-prefix as the
-  namespace on the reader tag and the symbol of the record on the
-  second part of the reader tag: e.g. #tickets/Ticket{},
-  #tickets/TicketAssigned{}"
-
-  [domain-spec reader-prefix fpath]
-  (binding [*data-readers* (get-domain-data-readers domain-spec reader-prefix)]
-    (doall (read-file fpath))))
-
-(defn build-entity-from-test-map [domain-spec test-map]
+(defn -perform-event-test [test-map domain-spec]
   (let [{entity-symbol :entity
          :keys [initial events expected]} test-map
         entity-ctor (get-in domain-spec [:crux.reify/constructors entity-symbol])
-        entity-reducer (get-in domain-spec [:crux.reify/reducers entity-symbol])]
-    (entity-ctor (or initial {}))))
+        entity-reducer (get-in domain-spec [:crux.reify/reducers entity-symbol])
+        entity0 (entity-ctor (or initial {}))]
+    (assert-reduction entity-reducer entity0 events expected)))
+
+(defn test-reductions [entity0 events reducer & [begin & [end]]]
+  (let [event-reductions (reductions reducer entity0 events)
+        begin (or begin 0)
+        zipped (into [] (map vector events (rest event-reductions)))
+        end (or end (count zipped))
+        ]
+    (subvec zipped begin end)))
+
+(deftest test-get-domain-events
+  (let [events (read-domain-event-log
+                (tickets/build-reified-test-domain-spec)
+                "test/crux/example/ticket_sample_events2.clj"
+                'tickets)]
+    (is events)))
 
 (deftest test-get+set-entity-on-reified-domain
-  (let [fpath "test/crux/example/tickets_sample_events1.clj"
+  (let [file-path "test/crux/example/tickets_sample_events1.clj"
         domain-spec (tickets/build-reified-test-domain-spec)
-        data-readers (get-domain-data-readers domain-spec 'tickets)
         test-map (first
-                  (read-domain-data-from-file domain-spec 'tickets fpath))
-        entity0 (build-entity-from-test-map domain-spec test-map)
-        get-entity (:crux.reify/get-entity domain-spec)
-        set-entity (:crux.reify/set-entity domain-spec)]
+                  (read-domain-data-from-file domain-spec file-path 'tickets))
 
-    (set-entity 'Ticket 1 entity0)
-    (is (= entity0 (get-entity 'Ticket 1)))))
+        {entity-symbol :entity
+         :keys [initial events expected]} test-map
+        entity-ctor (get-in domain-spec [:crux.reify/constructors entity-symbol])
+        entity-reducer (get-in domain-spec [:crux.reify/reducers entity-symbol])
+        entity0 (entity-ctor (or initial {}))
+
+        get-entity (:crux.reify/get-entity domain-spec)
+        set-entity (:crux.reify/set-entity domain-spec)
+
+        reduction-test (fn [ent0 ev]
+                         (let [ent (entity-reducer ent0 ev)]
+                           (set-entity 'Ticket 1 entity0)
+                           (is (= entity0 (get-entity 'Ticket 1)))
+                           ent))]
+
+    (doseq [[event red]
+            (test-reductions entity0 events entity-reducer)]
+      (println "")
+      (print (format "#tickets/%s" (.getSimpleName (type event))))
+      (pprint (into {} (filter second event)))
+      (print "\n   #_==>  #tickets/Ticket")
+      (pprint (into {}
+                    (filter second red))))
+    (is (submap? expected
+                 (reduce reduction-test entity0 events)))))
 
 
 (deftest test-read-events-from-file
-  (let [fpath "test/crux/example/tickets_sample_events1.clj"
-        domain-spec (tickets/build-reified-test-domain-spec)
-        data-readers (get-domain-data-readers domain-spec 'tickets)]
+  (let [file-path "test/crux/example/tickets_sample_events1.clj"
+        domain-spec (tickets/build-reified-test-domain-spec)]
     (doseq [test-map (read-domain-data-from-file
-                      domain-spec 'tickets fpath)]
+                      domain-spec file-path 'tickets)]
       (let [{entity-symbol :entity
              :keys [name initial events command expected]} test-map]
         (cond

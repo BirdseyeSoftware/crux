@@ -1,5 +1,8 @@
 (ns crux.util
-  (:require [clojure.set :as set]))
+  (:require [clojure.set :as set])
+  (:require [clojure.java.io :refer [reader]])
+  (:import [clojure.lang LineNumberingPushbackReader])
+  (:import [java.io File]))
 
 (defn submap? [m superm]
   (set/subset? (set (seq m)) (set (seq superm))))
@@ -44,3 +47,46 @@
      (def ~(symbol (format "-%s-fields-with-meta" name)) '~fields-with-meta)
      (defrecord ~name [~@fields-with-meta]
        ~@body)))
+
+(defn -read-forms-from-reader
+  ;; see https://github.com/jonase/kibit/blob/master/src/kibit/check.clj
+  "Gen a lazy sequence of top level forms from a LineNumberingPushbackReader"
+  [^LineNumberingPushbackReader r]
+  (lazy-seq
+    (let [form (try
+                 (read r false ::eof)
+                 (catch Exception e
+                   (throw (Exception.
+                           (str "reader crashed"
+                                (.getMessage e)) e))))]
+      (when-not (= form ::eof)
+        (cons form (-read-forms-from-reader r))))))
+
+(defn read-forms-from-file [file-or-path]
+  (-read-forms-from-reader
+   (LineNumberingPushbackReader. (reader file-or-path))))
+
+;; Stolen from clojure.contrib.with-ns
+(defmacro with-ns
+  "Evaluates body in another namespace. ns is either a namespace
+object or a symbol. This makes it possible to define functions in
+namespaces other than the current one."
+  [ns & body]
+  `(binding [*ns* (the-ns ~ns)]
+     ~@(map (fn [form] `(eval '~form)) body)))
+
+
+(defmacro with-test-ns
+  "Evaluates body in an anonymous namespace, which is then immediately
+removed. The temporary namespace will 'refer' clojure.core."
+  [name & body]
+  `(do
+     (when-let [test-ns# (find-ns '~name)]
+       (remove-ns 'test-ns#))
+
+     (create-ns '~name)
+     (let [test-ns# (find-ns '~name)]
+       (let [result# (with-ns '~name
+                       (clojure.core/refer-clojure)
+                       ~@body)]
+         result#))))

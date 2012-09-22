@@ -8,14 +8,10 @@
   (:require [crux.reify :refer [reify-domain-spec!]]))
 
 (defdomain orders
-  (entity Product [oid name])
-
   (entity Customer [name credit-allowance outstanding-balance]
           (properties
-           available-credit (- credit-allowance outstanding-balance)
-           has-credit? (pos? (available-credit entity))
-           ;; (has-credit? [entity] (pos? (available-credit entity)))
-           )
+           {available-credit (- credit-allowance outstanding-balance)
+            has-credit? (pos? (available-credit entity))})
 
     (events
       [Created Create entity-fields
@@ -32,6 +28,4 @@
         :validations [(check )]}
        (update-in [:outstanding-balance] + 100
                   ;; (order-total event)
-                  )]
-
-      )))
+                  )])))
