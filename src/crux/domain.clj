@@ -219,6 +219,7 @@
            dispatch-value (if event-spec
                             (FULL-EVENT-SYMBOL event-spec)
                             (ENTITY-SYMBOL entity-spec))]
+       ;; TODO add the FULL-COMMAND-SYMBOL dispatch val also
        (-> entity-spec
            (-add-property-forms property-forms-map event-spec)
            (update-in [PROPERTIES] -create-property-multifns property-forms-map)
