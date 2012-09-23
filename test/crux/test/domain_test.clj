@@ -31,64 +31,20 @@
       (-> (tickets/build-test-domain-spec)
           reify-domain-spec!))))
 
-
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;; unfinished command handling tests
+;;;
+(defn assert-reduction
+  ([reducer-fn init-state events expected-final-state]
+     (let [final (reduce reducer-fn init-state events)]
+       (is (submap? expected-final-state final)))))
 
-;; (defn handle-command-pseudo-code [event-spec command-symbol command]
-;;     (let [{entity-id :id
-;;            entity-rev :rev} (:crux/target command)
-;;            ;; rest of this atomically
-;;            entity-from-cache (get-entity 'Ticket entity-id)
-;;            entity-current-tip (:crux/rev entity-from-cache)
-;;            conflict-detector (:conflict-detector event-spec)
-;;            conflict (conflict-detector
-;;                      entity-id entity-rev
-;;                      entity-from-cache
-;;                      entity-current-tip)]
-;;       (if-not conflict
-;;         (let [constraints (COMMAND-CONSTRAINTS event-spec)
-;;               constraint-result (unmet-constraints entity constraints)
-;;               validations (COMMAND-VALIDATIONS spec)
-;;               validation-result (unmet-validations {:entity entity
-;;                                                     :event command
-;;                                                     :user nil}
-;;                                                    validations)
-
-;;               reducer (REDUCER assigned-event-spec)]
-;;           (when-not (empty? constraint-result)
-;;             (throw+
-;;              (format "Entity doesn't meet constraints: %s"
-;;                      (str/join ", " constraint-result))))
-;;           (when-not (empty? validation-result)
-;;             (throw+ validation-result))
-;;           (commit-events! entity [(map->TicketAssigned command)]))
-;;         (bitch-about conflict))))
-
-
-;; (defn -handle-assignment [entity command]
-;;   (let [reducer (REDUCER assigned-event-spec)
-;;         validations (COMMAND-VALIDATIONS assigned-event-spec)
-;;         constraints (COMMAND-CONSTRAINTS assigned-event-spec)
-;;         constraint-result (unmet-constraints entity constraints)
-;;         validation-result (unmet-validations {:entity entity
-;;                                         :event command
-;;                                         :user nil}
-;;                                        validations)]
-;;     (when-not (empty? constraint-result)
-;;       (throw+
-;;        (format "Entity doesn't meet constraints: %s"
-;;                (str/join ", " constraint-result))))
-;;     (when-not (empty? validation-result)
-;;       (throw+ validation-result))
-;;     ;(reducer entity (map->TicketAssigned command))
-;;     ))
-
-;; #_(unmet-validations {:user 123 :entity
-;;           (merge t1 {:state :closed :title "ok"})
-;;                     :event {}}
-;;                    {'(some-form) v1
-;;                     '(other) v2})
+(defn -perform-event-test [test-map domain-spec]
+  (let [{entity-symbol :entity
+         :keys [initial events expected]} test-map
+        entity-ctor (get-in domain-spec [:crux.reify/constructors entity-symbol])
+        entity-reducer (get-in domain-spec [:crux.reify/reducers entity-symbol])
+        entity0 (entity-ctor (or initial {}))]
+    (assert-reduction entity-reducer entity0 events expected)))
 
 (defn -perform-command-test [test-map domain-spec]
   (let [{entity-symbol :entity
@@ -112,20 +68,18 @@
     ;; 5 find event-constructor from event-spec and call it with command fields
 
     ))
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;;
-(defn assert-reduction
-  ([reducer-fn init-state events expected-final-state]
-     (let [final (reduce reducer-fn init-state events)]
-       (is (submap? expected-final-state final)))))
 
-(defn -perform-event-test [test-map domain-spec]
-  (let [{entity-symbol :entity
-         :keys [initial events expected]} test-map
-        entity-ctor (get-in domain-spec [:crux.reify/constructors entity-symbol])
-        entity-reducer (get-in domain-spec [:crux.reify/reducers entity-symbol])
-        entity0 (entity-ctor (or initial {}))]
-    (assert-reduction entity-reducer entity0 events expected)))
+(defn run-domain-test-specs-from-file [domain-spec file-path & [domain-prefix]]
+  (doseq [test-map (read-domain-data-from-file
+                    domain-spec file-path domain-prefix)]
+    (let [{entity-symbol :entity
+           :keys [name initial events command expected]} test-map]
+      (cond
+        (and events command)
+        (throw+ (format "Specify just events or command on %s" name))
+        events (-perform-event-test test-map domain-spec)
+        command (-perform-command-test test-map domain-spec)))))
+
 
 (defn test-reductions [entity0 events reducer & [begin & [end]]]
   (let [event-reductions (reductions reducer entity0 events)
@@ -159,8 +113,8 @@
 
         reduction-test (fn [ent0 ev]
                          (let [ent (entity-reducer ent0 ev)]
-                           (set-entity 'Ticket 1 entity0)
-                           (is (= entity0 (get-entity 'Ticket 1)))
+                           (set-entity entity-symbol 1 entity0)
+                           (is (= entity0 (get-entity entity-symbol 1)))
                            ent))]
 
     (doseq [[event red]
@@ -178,25 +132,9 @@
 (deftest test-ticket-events-from-file
   (let [file-path "test/crux/example/tickets_sample_events1.clj"
         domain-spec (tickets/build-reified-test-domain-spec)]
-    (doseq [test-map (read-domain-data-from-file
-                      domain-spec file-path 'tickets)]
-      (let [{entity-symbol :entity
-             :keys [name initial events command expected]} test-map]
-        (cond
-          (and events command)
-          (throw+ (format "Specify just events or command on %s" name))
-          events (-perform-event-test test-map domain-spec)
-          command (-perform-command-test test-map domain-spec))))))
+    (run-domain-test-specs-from-file domain-spec file-path 'tickets)))
 
 (deftest test-order-events-from-file
   (let [file-path "test/crux/example/orders_test_specs.clj"
         domain-spec (orders/build-reified-test-domain-spec)]
-    (doseq [test-map (read-domain-data-from-file
-                      domain-spec file-path 'orders)]
-      (let [{entity-symbol :entity
-             :keys [name initial events command expected]} test-map]
-        (cond
-          (and events command)
-          (throw+ (format "Specify just events or command on %s" name))
-          events (-perform-event-test test-map domain-spec)
-          command (-perform-command-test test-map domain-spec))))))
+    (run-domain-test-specs-from-file domain-spec file-path 'orders)))

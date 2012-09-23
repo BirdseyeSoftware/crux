@@ -149,6 +149,63 @@
   (reduce -reify-entity-event-reducer!
           domain-spec (keys (ENTITIES domain-spec))) )
 
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; Command handling
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; unfinished command handling tests
+
+;; (defn handle-command-pseudo-code [event-spec command-symbol command]
+;;     (let [{entity-id :id
+;;            entity-rev :rev} (:crux/target command)
+;;            ;; rest of this atomically
+;;            entity-from-cache (get-entity 'Ticket entity-id)
+;;            entity-current-tip (:crux/rev entity-from-cache)
+;;            conflict-detector (:conflict-detector event-spec)
+;;            conflict (conflict-detector
+;;                      entity-id entity-rev
+;;                      entity-from-cache
+;;                      entity-current-tip)]
+;;       (if-not conflict
+;;         (let [constraints (COMMAND-CONSTRAINTS event-spec)
+;;               constraint-result (unmet-constraints entity constraints)
+;;               validations (COMMAND-VALIDATIONS spec)
+;;               validation-result (unmet-validations {:entity entity
+;;                                                     :event command
+;;                                                     :user nil}
+;;                                                    validations)
+
+;;               reducer (REDUCER assigned-event-spec)]
+;;           (when-not (empty? constraint-result)
+;;             (throw+
+;;              (format "Entity doesn't meet constraints: %s"
+;;                      (str/join ", " constraint-result))))
+;;           (when-not (empty? validation-result)
+;;             (throw+ validation-result))
+;;           (commit-events! entity [(map->TicketAssigned command)]))
+;;         (bitch-about conflict))))
+
+
+;; (defn -handle-assignment [entity command]
+;;   (let [reducer (REDUCER assigned-event-spec)
+;;         validations (COMMAND-VALIDATIONS assigned-event-spec)
+;;         constraints (COMMAND-CONSTRAINTS assigned-event-spec)
+;;         constraint-result (unmet-constraints entity constraints)
+;;         validation-result (unmet-validations {:entity entity
+;;                                         :event command
+;;                                         :user nil}
+;;                                        validations)]
+;;     (when-not (empty? constraint-result)
+;;       (throw+
+;;        (format "Entity doesn't meet constraints: %s"
+;;                (str/join ", " constraint-result))))
+;;     (when-not (empty? validation-result)
+;;       (throw+ validation-result))
+;;     ;(reducer entity (map->TicketAssigned command))
+;;     ))
+
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; Main public interface
 
