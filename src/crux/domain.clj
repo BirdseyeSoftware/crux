@@ -11,6 +11,9 @@
                      defrecord-dynamically
                      defrecord-keep-meta]]))
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+
 (defn check [{:keys [entity event user]}
              validation-value error-msg]
   (when (not validation-value)
@@ -23,6 +26,7 @@
 (declare add-map-of-command->events-to-domain-spec)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
 (defn- throw-aready-declared-error [declaration-type sym owner-type owner]
   (throw+
    (java.lang.IllegalArgumentException.
@@ -38,19 +42,23 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; Core DDL Record types
 
-;;; NOTE! The :type meta declared below is for documentation / UI
-;;; building purposes. It has nothing to do with java type hinting.
-;;; Also note, we haven't started using them yet and they have
-;;; probably gotten out of sync with the rest of the code.
+;;; NOTE! The :type meta declared below on the defrecord-meta
+;;; declarations is for documentation / UI building purposes. It has
+;;; nothing to do with java type hinting.  Also note, we haven't
+;;; started using them yet and they have probably gotten out of sync
+;;; with the rest of the code.
 
 (defprotocol ICruxSpec
   (-validate-spec [this]))
 
 (defn -validate-entity-spec [entity-spec]
+  ;; when entity `fields` is not a vector of symbols
   (when-not (and (vector? (FIELDS entity-spec))
                  (every? symbol? (FIELDS entity-spec)))
     (throw+ {:type :crux/invalid-entity-fields
              :msg (str entity-spec)}))
+
+  ;; when each event `fields` is not a vector of symbols
   (doseq [[event-symbol event-map] (EVENTS entity-spec)]
     (when-not (and (vector? (FIELDS event-map))
                    (every? symbol? (FIELDS event-map)))
@@ -59,14 +67,16 @@
   entity-spec)
 
 (defn -validate-domain-spec [domain-spec]
-  ;; it's better to do this in each of the macros so the error
+  ;; NOTE: it's better to do this in each of the macros so the error
   ;; reporting is closer to the original source of the error
   (doseq [[entity-symbol entity-spec] (ENTITIES domain-spec)]
     (-validate-spec entity-spec))
   domain-spec)
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
 (defrecord-keep-meta CruxDefaults
-    [^{:type map.of.Symbol->AbstractFieldType} field-types
+    [^{:type {Symbol AbstractFieldTypeAbstractFieldType}} field-types
      ^{:type [[Fn, AbstractFieldType]]} type-inference-rules])
 
 (defrecord-keep-meta EventReductionSpec
@@ -91,14 +101,14 @@
      ^{:type CruxDefaults} defaults
      ^{:type Map} id-field
      ^{:type [Symbol]} fields
-     ^{:type ['EntityProperty]} properties
-     ^{:type map.of.Symbol->EventSpec} events
-     ^{:type map.of.Symbol->CommandSpec} commands]
+     ^{:type [EntityProperty]} properties
+     ^{:type {Symbol EventSpec}} events
+     ^{:type {Symbol CommandSpec}} commands]
 
   ICruxSpec
   (-validate-spec [this] (-validate-entity-spec this)))
 
-(defrecord DomainSpec
+(defrecord-keep-meta DomainSpec
     [^{:type Symbol} name
      ^{:type CruxDefaults} defaults
      ^{:type {Symbol EntitySpec}} entities
@@ -113,7 +123,7 @@
 (defn -ensure-is-crux-domain-spec [m]
   (if (instance? DomainSpec m) m (map->DomainSpec m)))
 
-(defn -seed-domain-with-crux-defaults [domain-spec]
+(defn -seed-domain-spec-with-crux-defaults [domain-spec]
   (if-let [provided-defaults (DEFAULTS domain-spec)]
     (if-not (instance? CruxDefaults provided-defaults)
       (assoc domain-spec DEFAULTS (map->CruxDefaults provided-defaults))
@@ -127,7 +137,7 @@
      ;; party ns's
      (-> ~initial-spec
          -ensure-is-crux-domain-spec
-         -seed-domain-with-crux-defaults
+         -seed-domain-spec-with-crux-defaults
          ~@body
          -validate-domain-spec)))
 
@@ -136,14 +146,17 @@
      (create-domain {:name '~domain-name}
        ~@body)))
 
-(defn -quote-or-unquote-fields-form [fields owner]
+(defn -quote-or-unquote-fields-form
+  "Allow fields a form to be either a vector of forms, or a var that
+has a reference to a vector of forms."
+  [fields owner]
   (cond
     (vector? fields) `'[~@fields]
     (unquoted? fields) (second fields)
     (= fields 'entity-fields) 'entity-fields
     :else (throw+
            (java.lang.IllegalArgumentException.
-            (format "Crux: Illegal fields def '%s' for %s"
+            (format "Crux: Illegal fields definition '%s' for %s"
                     fields owner)))))
 
 (defmacro entity [domain-spec entity-name entity-fields & body]
@@ -181,14 +194,17 @@
                                  (set (keys existing-multifns-map)))
         new-multifns-map (into {}
                            (for [k new-keys]
-                             [k (create-multi-fn k -property-dispatch-function)]))]
+                             [k
+                              (create-multi-fn
+                               k -property-dispatch-function)]))]
     (merge existing-multifns-map new-multifns-map)))
 
-(defn- -add-methods-to-properties [entity-spec
-                                   dispatch-value
-                                   name-of-local-symbol ; "event" or "entity"
-                                   fields
-                                   property-forms-map]
+(defn- -add-multimethods-to-properties
+  [entity-spec
+   dispatch-value
+   name-of-local-symbol ; "event" or "entity"
+   fields
+   property-forms-map]
   (let [existing-property-multifns (PROPERTIES entity-spec)
         property-fns-map
         (into {}
@@ -223,7 +239,7 @@
        (-> entity-spec
            (-add-property-forms property-forms-map event-spec)
            (update-in [PROPERTIES] -create-property-multifns property-forms-map)
-           (-add-methods-to-properties
+           (-add-multimethods-to-properties
             dispatch-value name-of-local-symbol fields property-forms-map)))))
 
 (defmacro properties [entity-spec property-forms-map]
@@ -322,8 +338,9 @@
       entity-spec)))
 
 (defn- -gen-constraint-checker-fns-map [entity-spec command-constraint-forms]
-  (into (array-map) (for [form command-constraint-forms]
-                      [form (-gen-single-constraint-checker entity-spec form)])))
+  (into (array-map)
+        (for [form command-constraint-forms]
+          [form (-gen-single-constraint-checker entity-spec form)])))
 
 (defn- -gen-command-validation-fns-map
   [entity-spec event-spec command-validation-forms]
@@ -371,10 +388,10 @@
             COMMAND-SYMBOL command-symbol
             FULL-COMMAND-SYMBOL (symbol
                                  (format "%s%s"
-                                         (COMMAND-SYMBOL event-spec) entity-symbol))
+                                     (COMMAND-SYMBOL event-spec) entity-symbol))
             FULL-EVENT-SYMBOL (symbol
                                (format "%s%s"
-                                       (ENTITY-SYMBOL entity-spec) event-symbol))
+                                      (ENTITY-SYMBOL entity-spec) event-symbol))
 
             FIELDS fields
             ADDITIONAL-EVENT-ATTRS additional-event-attrs
