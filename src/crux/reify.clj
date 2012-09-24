@@ -1,4 +1,15 @@
 (ns crux.reify
+  "crux.reify transforms abstract domain specs defined via the DSL in
+  crux.domain into concrete executable code:
+
+  - Each Entity type is reified with defrecord
+  - Each Event/Command pair is reified as a pair of record types
+  - An event reduction multimethod is created for each Entity and its
+    Events.
+  ...
+  "
+
+  (:require [clojure.string :as str])
   (:require [slingshot.slingshot :refer [throw+]])
   (:require [crux.internal.keys :refer :all])
   (:require [crux.util :refer
@@ -6,7 +17,10 @@
               addmethod-to-multi
               map-over-keys
               map-over-values
-              read-forms-from-file]]))
+              read-forms-from-file]])
+  (:require [crux.command-handling :refer
+             [unmet-validations
+              unmet-constraints]]))
 
 ;;; Crux Reification code:
 ;;; abstract-spec -> real records, event reduction multifns,
@@ -24,6 +38,22 @@
   (update-in domain-spec [:crux.reify/commands-to-events]
              assoc command-symbol event-symbol))
 
+(defn -add-event-records-to-entity-mapping [domain-spec event-spec]
+  (let [entity-symbol (ENTITY-SYMBOL event-spec)
+        reified-records (:crux.reify/records domain-spec)
+        ev-sym (FULL-EVENT-SYMBOL event-spec)
+        com-sym (FULL-COMMAND-SYMBOL event-spec)]
+    (-> domain-spec
+     (update-in [:crux.reify/records-to-entity-symbols]
+               merge
+               {(get-in reified-records [ev-sym :record-class]) entity-symbol
+                (get-in reified-records [com-sym :record-class])
+                entity-symbol})
+     (update-in [:crux.reify/event+command-symbols-to-entity-symbols]
+               merge
+               {ev-sym entity-symbol
+                com-sym entity-symbol}))))
+
 (defn -reify-event-and-command!
   [domain-spec event-spec]
   (let [{:keys [entity-symbol event-symbol]} event-spec
@@ -33,19 +63,22 @@
         command-record-map (defrecord-dynamically
                              full-command-symbol fields)
 
-
         full-event-symbol (FULL-EVENT-SYMBOL event-spec)
         event-record-map (defrecord-dynamically
                            full-event-symbol fields)]
     (-> domain-spec
-        (-add-command-to-event-mapping (COMMAND-SYMBOL event-spec) event-symbol)
+        (-add-command-to-event-mapping (COMMAND-SYMBOL event-spec)
+                                       event-symbol)
         (-add-command-to-event-mapping FULL-COMMAND-SYMBOL FULL-EVENT-SYMBOL)
 
         (-add-constructor-and-records-to-domain-spec
          full-command-symbol command-record-map)
 
         (-add-constructor-and-records-to-domain-spec
-         full-event-symbol event-record-map))))
+         full-event-symbol event-record-map)
+
+        (-add-event-records-to-entity-mapping event-spec)
+        )))
 
 (defn -reify-events-and-commands-for-each-entity! [domain-spec]
   (reduce -reify-event-and-command!
@@ -77,8 +110,6 @@
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; get-entity / set-entity
-
-;;(defn commit-events! [update-fn])
 
 ;; {
 ;;  ['Entity] (atom {id (atom {})})
@@ -151,62 +182,6 @@
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;; Command handling
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;; unfinished command handling tests
-
-;; (defn handle-command-pseudo-code [event-spec command-symbol command]
-;;     (let [{entity-id :id
-;;            entity-rev :rev} (:crux/target command)
-;;            ;; rest of this atomically
-;;            entity-from-cache (get-entity 'Ticket entity-id)
-;;            entity-current-tip (:crux/rev entity-from-cache)
-;;            conflict-detector (:conflict-detector event-spec)
-;;            conflict (conflict-detector
-;;                      entity-id entity-rev
-;;                      entity-from-cache
-;;                      entity-current-tip)]
-;;       (if-not conflict
-;;         (let [constraints (COMMAND-CONSTRAINTS event-spec)
-;;               constraint-result (unmet-constraints entity constraints)
-;;               validations (COMMAND-VALIDATIONS spec)
-;;               validation-result (unmet-validations {:entity entity
-;;                                                     :event command
-;;                                                     :user nil}
-;;                                                    validations)
-
-;;               reducer (REDUCER assigned-event-spec)]
-;;           (when-not (empty? constraint-result)
-;;             (throw+
-;;              (format "Entity doesn't meet constraints: %s"
-;;                      (str/join ", " constraint-result))))
-;;           (when-not (empty? validation-result)
-;;             (throw+ validation-result))
-;;           (commit-events! entity [(map->TicketAssigned command)]))
-;;         (bitch-about conflict))))
-
-
-;; (defn -handle-assignment [entity command]
-;;   (let [reducer (REDUCER assigned-event-spec)
-;;         validations (COMMAND-VALIDATIONS assigned-event-spec)
-;;         constraints (COMMAND-CONSTRAINTS assigned-event-spec)
-;;         constraint-result (unmet-constraints entity constraints)
-;;         validation-result (unmet-validations {:entity entity
-;;                                         :event command
-;;                                         :user nil}
-;;                                        validations)]
-;;     (when-not (empty? constraint-result)
-;;       (throw+
-;;        (format "Entity doesn't meet constraints: %s"
-;;                (str/join ", " constraint-result))))
-;;     (when-not (empty? validation-result)
-;;       (throw+ validation-result))
-;;     ;(reducer entity (map->TicketAssigned command))
-;;     ))
-
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; Main public interface
 
 (defn reify-domain-spec! [domain-spec]
@@ -218,10 +193,11 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; tools for using the records reified here
 
-(defn get-domain-data-readers [domain-spec prefix]
-  (map-over-keys
-   #(symbol (format "%s/%s" prefix %))
-   (:crux.reify/constructors domain-spec)))
+(defn get-domain-data-readers [domain-spec & [prefix]]
+  (let [prefix (or prefix (symbol (:name domain-spec)))]
+    (map-over-keys
+     #(symbol (format "%s/%s" prefix %))
+     (:crux.reify/constructors domain-spec))))
 
 (defn read-domain-data-from-file
   "Returns a seq of top level clojure data forms from the file. If the
@@ -234,10 +210,92 @@
   e.g. #tickets/Ticket{}, #tickets/TicketAssigned{}"
 
   [domain-spec file-path & [reader-prefix]]
-  (let [reader-prefix (or reader-prefix (:name domain-spec))]
+  (let [reader-prefix (or reader-prefix (symbol (:name domain-spec)))]
     (binding [*data-readers* (get-domain-data-readers
                               domain-spec reader-prefix)]
       (doall (read-forms-from-file file-path)))))
 
 (defn read-domain-event-log [domain-spec file-path & [domain-prefix]]
   (read-domain-data-from-file domain-spec file-path domain-prefix))
+
+(defn -resolve-entity-symbol [domain-spec domain-symbol-or-class]
+  (cond (symbol? domain-symbol-or-class)
+        (if (get-in domain-spec [ENTITIES domain-symbol-or-class])
+          domain-symbol-or-class
+          (get-in domain-spec
+                  [:crux.reify/event+command-symbols-to-entity-symbols
+                   domain-symbol-or-class]))
+
+        :else
+        (get-in domain-spec [:crux.reify/records-to-entity-symbols
+                             domain-symbol-or-class])))
+
+(defn get-reducer [domain-spec domain-symbol-or-class]
+  (get-in domain-spec [:crux.reify/reducers
+                       (-resolve-entity-symbol
+                        domain-spec
+                        domain-symbol-or-class)]))
+
+(defn get-entity-ctor [domain-spec domain-symbol-or-class]
+  (get-in domain-spec [:crux.reify/constructors
+                       (-resolve-entity-symbol
+                        domain-spec
+                        domain-symbol-or-class)]))
+
+(defn -reduce-events [clj-reduce-fn domain-spec events & [entity0]]
+  (let [ev1-type (type (first events))
+        entity-ctor (get-entity-ctor domain-spec ev1-type)
+        reducer (get-reducer domain-spec ev1-type)
+        entity0 (entity-ctor (or entity0 {}))]
+    (clj-reduce-fn reducer entity0 events)))
+
+(defn reduce-events [domain-spec events & [entity0]]
+  (-reduce-events reduce domain-spec events entity0))
+
+(defn reduction-of-events [domain-spec events & [entity0]]
+  (-reduce-events reductions domain-spec events entity0))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; Command handling
+#_(defn get-spec-for-command [command-record]
+  nil
+  )
+
+#_(defn handle-command-pseudo-code [domain-spec command]
+  (let [event-spec (get-spec-for-command command)
+        entity-symbol (ENTITY-SYMBOL event-spec)
+        {entity-id :id
+         entity-rev :rev} (:crux/target command)
+        ;; rest of this atomically
+        get-entity (:crux.reify/get-entity domain-spec)
+        set-entity (:crux.reify/set-entity domain-spec)
+
+        entity-from-cache (get-entity entity-symbol entity-id)
+        entity-current-tip (:crux/rev entity-from-cache)
+        conflict-detector (:conflict-detector event-spec)
+        conflict (conflict-detector
+                  entity-id entity-rev
+                  entity-from-cache
+                  entity-current-tip)]
+    (if-not conflict
+      (let [constraints (COMMAND-CONSTRAINTS event-spec)
+            constraint-result (unmet-constraints
+                               entity-from-cache constraints)
+            validations (COMMAND-VALIDATIONS event-spec)
+            validation-result (unmet-validations
+                               {:entity entity-from-cache
+                                :event command
+                                :user nil}
+                               validations)
+
+            reducer (REDUCER event-spec)]
+        (when-not (empty? constraint-result)
+          (throw+
+           (format "Entity doesn't meet constraints: %s"
+                   (str/join ", " constraint-result))))
+        (when-not (empty? validation-result)
+          (throw+ validation-result))
+        ;; (commit-events! )
+        )
+      ;; (bitch-about conflict)
+      )))

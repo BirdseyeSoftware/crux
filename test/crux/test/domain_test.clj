@@ -2,6 +2,7 @@
   (:require [clojure.test :refer :all]
             [clojure.data :refer [diff]]
             [clojure.pprint :refer [pprint]]
+            [clojure.set :as set]
             [slingshot.slingshot :refer [throw+]]
 
             [crux.example.tickets :as tickets]
@@ -15,9 +16,12 @@
             [crux.reify :refer
              [get-domain-data-readers
               read-domain-data-from-file
-              read-domain-event-log]])
+              read-domain-event-log
+              get-reducer
+              get-entity-ctor
+              reduce-events
+              reduction-of-events]])
   (:import [crux.domain DomainSpec]))
-
 
 (deftest test-domain-is-built-correctly
   (let [tickets-domain (tickets/build-test-domain-spec)]
@@ -28,29 +32,99 @@
     (with-test-ns tickets-test
       (require '[crux.reify :refer (reify-domain-spec!)])
       (require '[crux.example.tickets :as tickets])
+      ;; TODO add tests for more than just barfs ...
       (-> (tickets/build-test-domain-spec)
           reify-domain-spec!))))
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;;
-(defn assert-reduction
-  ([reducer-fn init-state events expected-final-state]
-     (let [final (reduce reducer-fn init-state events)]
-       (is (submap? expected-final-state final)))))
+(deftest test-read-domain-event-log
+  (let [events (read-domain-event-log
+                (tickets/build-reified-test-domain-spec)
+                "test/crux/example/ticket_sample_events2.clj"
+                )]
+    (is (-> events empty? not))))
 
+(deftest test-get+set-entity-on-reified-domain
+  (let [file-path "test/crux/example/tickets_sample_events1.clj"
+        domain-spec (tickets/build-reified-test-domain-spec)
+        test-map (first (read-domain-data-from-file domain-spec file-path))
+        {:keys [entity initial events expected]} test-map
+
+        entity-ctor (get-entity-ctor domain-spec entity)
+        entity-reducer (get-reducer domain-spec entity)
+        entity0 (entity-ctor (or initial {}))
+
+        get-entity (:crux.reify/get-entity domain-spec)
+        set-entity (:crux.reify/set-entity domain-spec)
+        reduction-test (fn [ent0 ev]
+                         (let [ent (entity-reducer ent0 ev)]
+                           (set-entity entity 1 entity0)
+                           (is (= entity0 (get-entity entity 1)))
+                           ent))]
+    (is (submap? expected
+                 (reduce reduction-test entity0 events)))))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(defn zip-reductions [events event-reductions & [begin & [end]]]
+  (let [begin (or begin 0)
+        zipped (into [] (map vector events
+                             event-reductions ; input
+                             (rest event-reductions) ; output
+                             ))
+        end (or end (count zipped))]
+    (subvec zipped begin end)))
+
+(defn print-event-reductions [domain-spec events
+                              & {:keys [initial begin end highlight]}]
+  (let [event-reductions (reduction-of-events domain-spec events initial)
+        reductions (zip-reductions events event-reductions)
+        domain-prefix (symbol (:name domain-spec))
+        type-name #(.getSimpleName (type %))]
+    (doseq [[i [event input red]] (map vector
+                                       (range (count reductions))
+                                       reductions)]
+      (let [diff (into {} (set/difference (set red) (set input)))]
+        (println "")
+        (print (format "#%s/%s" domain-prefix (type-name event)))
+        (pprint (into {} (filter second event)))
+        (if (= highlight i)
+          (print "   #_result->>> ")
+          (print "   #_result-> "))
+        ;; (print (format "#%s/%s" domain-prefix (type-name red)) )
+        (pprint (into {} (filter second red)))
+        (print "   #_diff-> ")
+        (pprint diff)))))
+
+(deftest test-print-reductions-on-orders-domain
+  (let [file-path "test/crux/example/orders_test_specs.clj"
+        domain-spec (orders/build-reified-test-domain-spec)
+        {:keys [initial events expected]}
+        (first (read-domain-data-from-file domain-spec file-path))]
+    (print-event-reductions domain-spec events :highlight 4)))
+
+(deftest test-print-reductions-on-tickets-domain
+  (let [file-path "test/crux/example/tickets_sample_events1.clj"
+        domain-spec (tickets/build-reified-test-domain-spec)
+        {:keys [initial events expected]}
+        (first (read-domain-data-from-file domain-spec file-path))]
+    (print-event-reductions domain-spec events)))
+
+(defn event-log-to-reductions []
+  (let [domain-spec (tickets/build-reified-test-domain-spec)
+        events (read-domain-event-log domain-spec "ticket-events.clj")]
+    (print-event-reductions domain-spec events)))
+
+(event-log-to-reductions)
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 (defn -perform-event-test [test-map domain-spec]
-  (let [{entity-symbol :entity
-         :keys [initial events expected]} test-map
-        entity-ctor (get-in domain-spec [:crux.reify/constructors entity-symbol])
-        entity-reducer (get-in domain-spec [:crux.reify/reducers entity-symbol])
-        entity0 (entity-ctor (or initial {}))]
-    (assert-reduction entity-reducer entity0 events expected)))
+  (let [{:keys [initial events expected]} test-map
+        final (reduce-events domain-spec events initial)]
+    (is (submap? expected final))))
 
 (defn -perform-command-test [test-map domain-spec]
   (let [{entity-symbol :entity
          :keys [initial command expected]} test-map
-         entity-ctor (get-in domain-spec
-                             [:crux.reify/constructors entity-symbol])
+         entity-ctor (get-entity-ctor domain-spec entity-symbol)
         ;; entity-command-handler (get-in domain-spec
         ;;                                [:crux.reify/command-handler entity-symbol])
          entity0 (entity-ctor (or initial {}))
@@ -79,55 +153,6 @@
         (throw+ (format "Specify just events or command on %s" name))
         events (-perform-event-test test-map domain-spec)
         command (-perform-command-test test-map domain-spec)))))
-
-
-(defn test-reductions [entity0 events reducer & [begin & [end]]]
-  (let [event-reductions (reductions reducer entity0 events)
-        begin (or begin 0)
-        zipped (into [] (map vector events (rest event-reductions)))
-        end (or end (count zipped))
-        ]
-    (subvec zipped begin end)))
-
-(deftest test-get-domain-events
-  (let [events (read-domain-event-log
-                (tickets/build-reified-test-domain-spec)
-                "test/crux/example/ticket_sample_events2.clj"
-                'tickets)]
-    (is events)))
-
-(deftest test-get+set-entity-on-reified-domain
-  (let [file-path "test/crux/example/tickets_sample_events1.clj"
-        domain-spec (tickets/build-reified-test-domain-spec)
-        test-map (first
-                  (read-domain-data-from-file domain-spec file-path 'tickets))
-
-        {entity-symbol :entity
-         :keys [initial events expected]} test-map
-        entity-ctor (get-in domain-spec [:crux.reify/constructors entity-symbol])
-        entity-reducer (get-in domain-spec [:crux.reify/reducers entity-symbol])
-        entity0 (entity-ctor (or initial {}))
-
-        get-entity (:crux.reify/get-entity domain-spec)
-        set-entity (:crux.reify/set-entity domain-spec)
-
-        reduction-test (fn [ent0 ev]
-                         (let [ent (entity-reducer ent0 ev)]
-                           (set-entity entity-symbol 1 entity0)
-                           (is (= entity0 (get-entity entity-symbol 1)))
-                           ent))]
-
-    (doseq [[event red]
-            (test-reductions entity0 events entity-reducer)]
-      (println "")
-      (print (format "#tickets/%s" (.getSimpleName (type event))))
-      (pprint (into {} (filter second event)))
-      (print "\n   #_==>  #tickets/Ticket")
-      (pprint (into {}
-                    (filter second red))))
-    (is (submap? expected
-                 (reduce reduction-test entity0 events)))))
-
 
 (deftest test-ticket-events-from-file
   (let [file-path "test/crux/example/tickets_sample_events1.clj"
