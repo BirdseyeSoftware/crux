@@ -133,7 +133,7 @@
 
 (defmacro defdomain [domain-name & body]
   `(def ~domain-name
-     (create-domain {:name ~domain-name}
+     (create-domain {:name '~domain-name}
        ~@body)))
 
 (defn -quote-or-unquote-fields-form [fields owner]
