@@ -1,13 +1,18 @@
 {:entity Ticket
  :name "Ticket test 1"
  :events [
-          #tickets/TicketCreated {:title "Ticket 1 Foo"}
-          #tickets/TicketDetailsChanged {:title "Ticket 1 ok"}
+          #tickets/TicketCreated {:title "Foo"}
+          #tickets/TicketDetailsChanged {:title "Bar"}
           #tickets/TicketAssigned {:assignee 987}
           #tickets/TicketAssigned {:assignee 123}
+          #tickets/TicketRead {:user-id 444}
           #tickets/TicketClosed {}
           ]
- :expected {:title "Ticket 1 ok" :assignee nil :state :closed}}
+ :expected {:title "Bar"
+            :assignee nil
+            :state :closed
+            :read-by [444]
+            :read-count 1}}
 
 {:entity User
  :name "User test 1"
