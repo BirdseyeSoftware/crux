@@ -1,10 +1,12 @@
 (ns crux.example.tickets
-  (:require [crux.internal.keys :refer :all])
-  (:require [slingshot.slingshot :refer (throw+)])
   (:require [clojure.pprint :refer (pprint)]
             [clojure.string :as str])
-  (:require [crux.domain :refer :all])
-  (:require [crux.reify :refer [reify-domain-spec!]]))
+
+  (:require [slingshot.slingshot :refer (throw+)])
+
+  (:require [crux.domain :refer :all]
+            [crux.reify :refer [reify-domain-spec!]]
+            [crux.internal.keys :refer :all]))
 
 (def ticket-field-types
   '{oid :guid
@@ -86,7 +88,7 @@
 (defn build-test-domain-spec []
   tickets)
 
-(def reified-tickets  (reify-domain-spec! tickets))
+(def reified-tickets (reify-domain-spec! tickets))
 
 (defn build-reified-test-domain-spec []
   reified-tickets)
