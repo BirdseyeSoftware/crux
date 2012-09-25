@@ -8,21 +8,29 @@
     Events.
   ...
   "
-
   (:require [clojure.string :as str])
+
   (:require [slingshot.slingshot :refer [throw+]])
-  (:require [crux.internal.keys :refer :all])
-  (:require [crux.util :refer
+
+  (:require [crux.internal.keys :refer :all]
+            [crux.util :refer
              [defrecord-dynamically
-              addmethod-to-multi
+              type-symbol
+              add-method-to-multi
               map-over-keys
               map-over-values
-              read-forms-from-file]])
-  (:require [crux.command-handling :refer
+              read-forms-from-file]]
+            [crux.command-handling :refer
              [unmet-validations
               unmet-constraints]]))
 
+
+(defn get-target-info-from-command [command]
+  (:crux/target (meta command)))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; Crux Reification code:
+
 ;;; abstract-spec -> real records, event reduction multifns,
 ;;; data-readers, etc.
 
@@ -34,11 +42,13 @@
       (update-in [:crux.reify/constructors]
                  assoc record-symbol (:record-ctor record-map))))
 
-(defn -add-command-to-event-mapping [domain-spec command-symbol event-symbol]
+(defn -add-command-to-event-mapping
+  [domain-spec command-symbol event-symbol]
   (update-in domain-spec [:crux.reify/commands-to-events]
              assoc command-symbol event-symbol))
 
-(defn -add-event-records-to-entity-mapping [domain-spec event-spec]
+(defn -add-event-records-to-entity-mapping
+  [domain-spec event-spec]
   (let [entity-symbol (ENTITY-SYMBOL event-spec)
         reified-records (:crux.reify/records domain-spec)
         ev-sym (FULL-EVENT-SYMBOL event-spec)
@@ -57,19 +67,18 @@
 (defn -reify-event-and-command!
   [domain-spec event-spec]
   (let [{:keys [entity-symbol event-symbol]} event-spec
-        fields (FIELDS event-spec)
-
+        fields              (FIELDS event-spec)
         full-command-symbol (FULL-COMMAND-SYMBOL event-spec)
-        command-record-map (defrecord-dynamically
-                             full-command-symbol fields)
+        command-record-map  (defrecord-dynamically full-command-symbol fields)
+        full-event-symbol   (FULL-EVENT-SYMBOL event-spec)
+        event-record-map    (defrecord-dynamically full-event-symbol fields)]
 
-        full-event-symbol (FULL-EVENT-SYMBOL event-spec)
-        event-record-map (defrecord-dynamically
-                           full-event-symbol fields)]
     (-> domain-spec
-        (-add-command-to-event-mapping (COMMAND-SYMBOL event-spec)
-                                       event-symbol)
-        (-add-command-to-event-mapping FULL-COMMAND-SYMBOL FULL-EVENT-SYMBOL)
+        (-add-command-to-event-mapping
+         (COMMAND-SYMBOL event-spec) event-symbol)
+
+        (-add-command-to-event-mapping
+         (FULL-COMMAND-SYMBOL event-spec) (FULL-EVENT-SYMBOL event-spec))
 
         (-add-constructor-and-records-to-domain-spec
          full-command-symbol command-record-map)
@@ -77,8 +86,7 @@
         (-add-constructor-and-records-to-domain-spec
          full-event-symbol event-record-map)
 
-        (-add-event-records-to-entity-mapping event-spec)
-        )))
+        (-add-event-records-to-entity-mapping event-spec))))
 
 (defn -reify-events-and-commands-for-each-entity! [domain-spec]
   (reduce -reify-event-and-command!
@@ -86,24 +94,26 @@
           (flatten (map #(vals (EVENTS %))
                         (vals (ENTITIES domain-spec))))))
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+
+(defn -bind-properties-to-entity-record-ctor
+  [entity-spec record-map]
+  (let [properties  (get-in entity-spec [PROPERTIES])
+        orig-ctor   (get-in record-map  [:record-ctor])]
+    (assoc record-map :record-ctor
+           #(vary-meta (orig-ctor %) assoc CRUX-PROPERTIES properties))))
+
 
 (defn -reify-entity-record! [domain-spec entity-symbol]
   (let [entity-spec (get-in domain-spec [ENTITIES entity-symbol])
-        fields (FIELDS entity-spec)
-        properties (PROPERTIES entity-spec)
-        defrecord-map (defrecord-dynamically entity-symbol fields)
-        orig-ctor (:record-ctor defrecord-map)
-        crux-meta-fields {CRUX-PROPERTIES properties}
-        defrecord-map (assoc defrecord-map
-                        :record-ctor
-                        (fn [m] (vary-meta
-                                 (orig-ctor m)
-                                 merge crux-meta-fields)))]
+        record-map  (defrecord-dynamically entity-symbol (FIELDS entity-spec))
+        record-map  (-bind-properties-to-entity-record-ctor
+                       entity-spec record-map)]
     (-> domain-spec
-        (update-in [ENTITIES entity-symbol] merge defrecord-map)
+        (update-in [ENTITIES entity-symbol] merge record-map)
         (-add-constructor-and-records-to-domain-spec
-            entity-symbol defrecord-map))))
+            entity-symbol record-map))))
 
 (defn -reify-all-entity-records! [domain-spec]
   (reduce -reify-entity-record! domain-spec (keys (ENTITIES domain-spec))))
@@ -114,7 +124,6 @@
 ;; {
 ;;  ['Entity] (atom {id (atom {})})
 ;; }
-
 (defn -reify-get+set-entity-functions [domain-spec]
   (let [entity-caches-map (map-over-values (constantly (atom {}))
                                            (ENTITIES domain-spec))]
@@ -147,50 +156,119 @@
                 @entity-atom
                 nil)))))))
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(defn -reify-domain-records! [domain-spec]
+(defn -reify-validate-command-function
+  [domain-spec]
+  (assoc domain-spec :crux.reify/validate-command-fn
+         (fn validate-command [command entity user]
+           (let [command-symbol (type-symbol command)
+                 validations    (get-command-validations
+                                 domain-spec command-symbol)
+                 validation-args {:entity entity
+                                  :user user
+                                  :command command}
+                 validation-errors (unmet-validations
+                                    validation-args validations)]
+             (when-not (empty? validation-errors)
+               (throw+ {:type :crux/validations-not-met
+                        :message
+                        (format "%d errors found:\n%s"
+                                (str/join "\n"
+                                          (map :error-message
+                                               validation-errors)))}))))))
+
+(defn -reify-check-command-constraints-function
+  [domain-spec]
+  (assoc domain-spec :crux.reify/check-command-constraints-fn
+         (fn check-command-constraints [command entity]
+           (let [command-symbol (type-symbol command)
+                 constraints    (get-command-constraints
+                                 domain-spec command-symbol)
+
+                 constraint-failures (unmet-constraints entity constraints)]
+             (when-not (empty? constraint-failures)
+               (throw+ {:type :crux/constraints-not-met
+                        :message
+                        (format "Constraints were not met: %s"
+                                (str/join "\n"
+                                          (map str
+                                               constraint-failures)))}))))))
+
+(defn -build-event-from-command
+  [domain-spec command]
+  (let [command-symbol (type-symbol command)
+        event-symbol (get-in domain-spec
+                             [:crux.reify/commands-to-events command-symbol])
+        event-ctor    (get-in domain-spec
+                              [:crux.reify/constructors event-symbol])]
+   (event-ctor command)))
+
+(defn get-check-command-constraints-fn
+  [domain-spec]
+  (get domain-spec :crux.reify/check-command-constraints-fn))
+
+(defn get-validate-command-fn
+  [domain-spec]
+  (get domain-spec :crux.reify/validate-command-fn))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; Reify domain
+
+(defn -reify-domain-records!
+  [domain-spec]
   (-> domain-spec
       -reify-all-entity-records!
       -reify-events-and-commands-for-each-entity!))
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; Reify event reducers
 
-(defn -reify-entity-event-reducer! [domain-spec entity-symbol]
-  (let [multi-name (symbol (format "%s-event-reducer" entity-symbol))
-        events (get-in domain-spec  [ENTITIES entity-symbol EVENTS])
-        multifn-var (eval `(defmulti ~multi-name
-                             (fn [entity# event#] (type event#))))
-        multifn (eval `~multi-name)]
+(defn -reify-multi-for-event-reducer!
+  [entity-symbol]
+  (let [multifn-name (symbol (format "%s-event-reducer" entity-symbol))
+        _            (eval `(defmulti ~multifn-name
+                              (fn [entity# event#] (type event#))))]
+   (eval `~multifn-name)))
 
-    (doseq [[event-symbol event-spec] events]
-      (let [event-rec-symbol
-            (symbol (format "%s%s" entity-symbol event-symbol))
-            reducer-fn (REDUCER event-spec)
-            record-map (get-in domain-spec
-                               [:crux.reify/records event-rec-symbol])]
+(defn -reify-entity-event-reducer!
+  [domain-spec entity-symbol]
+  (let [multifn     (-reify-multi-for-event-reducer! entity-symbol)
+        event-specs (get-in domain-spec  [ENTITIES entity-symbol EVENTS])]
+
+    (doseq [[event-symbol event-spec] event-specs]
+      (let [event-rec-symbol (FULL-EVENT-SYMBOL event-spec)
+            reducer-fn       (REDUCER event-spec)
+            record-map       (get-in domain-spec
+                                     [:crux.reify/records event-rec-symbol])]
         (when-not reducer-fn
           (throw+ {:type :library/specify-reducer-error
                    :msg ""}))
-        (addmethod-to-multi
+
+        (add-method-to-multi
          multifn (:record-class record-map) reducer-fn)))
+
     (update-in domain-spec [:crux.reify/reducers]
                assoc entity-symbol multifn)))
 
-(defn -reify-all-entity-event-reducers! [domain-spec]
+(defn -reify-all-entity-event-reducers!
+  [domain-spec]
   (reduce -reify-entity-event-reducer!
-          domain-spec (keys (ENTITIES domain-spec))) )
+          domain-spec (keys (ENTITIES domain-spec))))
 
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; Main public interface
 
+(declare -reify-command->event-fn-to-domain-spec)
 (defn reify-domain-spec! [domain-spec]
   (-> domain-spec
       -reify-domain-records!
       -reify-get+set-entity-functions
-      -reify-all-entity-event-reducers!))
+      -reify-all-entity-event-reducers!
+      -reify-check-command-constraints-function
+      -reify-validate-command-function
+      -reify-command->event-fn-to-domain-spec))
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; tools for using the records reified here
 
 (defn get-domain-data-readers [domain-spec & [prefix]]
@@ -257,15 +335,79 @@
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; Command handling
-#_(defn get-spec-for-command [command-record]
-  nil
-  )
+
+
+;;; Utility functions to transform command-symbol to
+;;; event/entity
+
+(defn get-entity-symbol-from-command-symbol
+  [domain-spec command-symbol]
+  (get (:crux.reify/event+command-symbols-to-entity-symbols domain-spec)
+       command-symbol))
+
+(defn get-event-symbol-from-command-symbol
+  [domain-spec command-symbol]
+  (get (:crux.reify/commands-to-events domain-spec)
+       command-symbol))
+
+(defn get-command-constraints
+  [domain-spec command-symbol]
+  (let [entity-symbol (get-entity-symbol-from-command-symbol
+                       domain-spec command-symbol)]
+    (get-in domain-spec
+            [ENTITIES entity-symbol COMMAND-CONSTRAINTS])))
+
+(defn get-command-validations
+  [domain-spec command-symbol]
+  (let [entity-symbol (get-entity-symbol-from-command-symbol
+                       domain-spec command-symbol)]
+    (get-in domain-spec
+            [ENTITIES entity-symbol COMMAND-VALIDATIONS])))
+
+
+(defn -reify-command->event-fn [domain-spec]
+    (fn command-handler [command]
+      (let [;;; get meta data needed in order to process the command
+            {entity-oid :oid
+             entity-rev :rev
+             user-oid :user-oid} (:crux/target (meta command))
+
+             ;;; get-command+event+entity-symbols-from-domain-spec-and-command
+             command-symbol   (type-symbol command)
+             entity-symbol    (get-entity-symbol-from-command-symbol
+                               domain-spec command-symbol)
+
+             check-command-constraints (get-check-command-constraints-fn
+                                         domain-spec)
+             validate-command          (get-validate-command-fn
+                                         domain-spec)
+
+             ;;; entity of the command
+             get-entity       (:crux.reify/get-entity domain-spec)
+             entity           (get-entity entity-symbol
+                                          entity-oid
+                                          #_entity-rev)
+
+             ;; TODO: set a variable that has the 'User entity.
+             user             (get-entity 'User user-oid)
+             ]
+        (do
+          (check-command-constraints command entity)
+          (validate-command command entity user)
+          (-build-event-from-command domain-spec command)))))
+
+(defn -reify-command->event-fn-to-domain-spec
+  [domain-spec]
+  (assoc domain-spec
+    :crux.reify/command->event-fn (-reify-command->event-fn domain-spec)))
+
 
 #_(defn handle-command-pseudo-code [domain-spec command]
   (let [event-spec (get-spec-for-command command)
         entity-symbol (ENTITY-SYMBOL event-spec)
         {entity-id :id
          entity-rev :rev} (:crux/target command)
+
         ;; rest of this atomically
         get-entity (:crux.reify/get-entity domain-spec)
         set-entity (:crux.reify/set-entity domain-spec)
