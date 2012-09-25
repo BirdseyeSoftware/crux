@@ -1,18 +1,22 @@
 (ns crux.domain
   (:require [clojure.set :as set])
-  (:require [crux.internal.keys :refer :all])
+
   (:require [slingshot.slingshot :refer (throw+)])
-  (:require [crux.util
-             :refer [eval-with-meta
+
+  (:require [crux.internal.keys :refer :all]
+            [crux.util
+             :refer [throw-already-declared-error
+                     throw-reduce-forms-required-error
+                     eval-with-meta
                      unquoted?
+                     -quote-or-unquote-fields-form
                      map-over-keys
-                     create-multi-fn
-                     addmethod-to-multi
+                     create-multi
+                     add-method-to-multi
                      defrecord-dynamically
                      defrecord-keep-meta]]))
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defn check [{:keys [entity event user]}
              validation-value error-msg]
@@ -25,21 +29,7 @@
 ;; TODO
 (declare add-map-of-command->events-to-domain-spec)
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-(defn- throw-aready-declared-error [declaration-type sym owner-type owner]
-  (throw+
-   (java.lang.IllegalArgumentException.
-    (format "Crux: %s '%s' already declared for %s '%s'"
-            declaration-type sym owner-type owner))))
-
-(defn- throw-reduce-forms-required-error [event-symbol]
-  (throw+
-   (java.lang.IllegalArgumentException.
-    (format "Crux: %s '%s' requires a reduce form"
-            event-symbol))))
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; Core DDL Record types
 
 ;;; NOTE! The :type meta declared below on the defrecord-meta
@@ -49,31 +39,10 @@
 ;;; with the rest of the code.
 
 (defprotocol ICruxSpec
+  (get-name [this])
+  (get-symbol [this])
+  (get-full-symbol [this])
   (-validate-spec [this]))
-
-(defn -validate-entity-spec [entity-spec]
-  ;; when entity `fields` is not a vector of symbols
-  (when-not (and (vector? (FIELDS entity-spec))
-                 (every? symbol? (FIELDS entity-spec)))
-    (throw+ {:type :crux/invalid-entity-fields
-             :msg (str entity-spec)}))
-
-  ;; when each event `fields` is not a vector of symbols
-  (doseq [[event-symbol event-map] (EVENTS entity-spec)]
-    (when-not (and (vector? (FIELDS event-map))
-                   (every? symbol? (FIELDS event-map)))
-      (throw+ {:type :crux/invalid-event-fields
-               :msg (str event-map)})))
-  entity-spec)
-
-(defn -validate-domain-spec [domain-spec]
-  ;; NOTE: it's better to do this in each of the macros so the error
-  ;; reporting is closer to the original source of the error
-  (doseq [[entity-symbol entity-spec] (ENTITIES domain-spec)]
-    (-validate-spec entity-spec))
-  domain-spec)
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defrecord-keep-meta CruxDefaults
     [^{:type {Symbol AbstractFieldTypeAbstractFieldType}} field-types
@@ -88,12 +57,24 @@
      ^{:type [Symbol]} fields
      ^{:type [EventReductionSpec]} reduce-forms
      ^{:type Fn } reducer
-     ^{:type CruxDefaults} defaults])
+     ^{:type CruxDefaults} defaults]
+
+  ICruxSpec
+  (get-name [this] (EVENT-NAME this))
+  (get-symbol [this] (EVENT-SYMBOL this))
+  (get-full-symbol [this] (FULL-EVENT-SYMBOL this))
+  (-validate-spec [this] this))
 
 (defrecord-keep-meta CommandSpec
     [^{:type Symbol} name
      ^{:type [Symbol]} fields
-     ^{:type CruxDefaults} defaults])
+     ^{:type CruxDefaults} defaults]
+
+  ICruxSpec
+  (get-name [this] (COMMAND-NAME this))
+  (get-symbol [this] (COMMAND-SYMBOL this))
+  (get-full-symbol [this] (FULL-COMMAND-SYMBOL this))
+  (-validate-spec [this] this))
 
 (defrecord-keep-meta EntitySpec
     [^{:type Symbol} name
@@ -106,7 +87,32 @@
      ^{:type {Symbol CommandSpec}} commands]
 
   ICruxSpec
-  (-validate-spec [this] (-validate-entity-spec this)))
+  (get-name [this] (ENTITY-NAME this))
+  (get-symbol [this] (ENTITY-SYMBOL this))
+  (get-full-symbol [this] (ENTITY-SYMBOL this))
+  (-validate-spec [this]
+    ;; when entity `fields` is not a vector of symbols
+    (when-not (and (vector? (FIELDS this))
+                   (every? symbol? (FIELDS this)))
+        (throw+ {:type :crux/invalid-entity-fields
+                 :msg (str this)}))
+
+   ;; when each event `fields` is not a vector of symbols
+   (doseq [[event-symbol event-map] (EVENTS this)]
+    (when-not (and (vector? (FIELDS event-map))
+                   (every? symbol? (FIELDS event-map)))
+      (throw+ {:type :crux/invalid-event-fields
+               :msg (str event-map)})))
+
+    this))
+
+(defn -validate-domain-spec [domain-spec]
+  ;; NOTE: it's better to do this in each of the macros so the error
+  ;; reporting is closer to the original source of the error
+
+  (doseq [[entity-symbol entity-spec] (ENTITIES domain-spec)]
+    (-validate-spec entity-spec))
+  domain-spec)
 
 (defrecord-keep-meta DomainSpec
     [^{:type Symbol} name
@@ -115,9 +121,19 @@
      ^{:type {Symbol Symbol}} reifications]
 
   ICruxSpec
-  (-validate-spec [this] (-validate-domain-spec this)))
+  (get-name [this] (:name this))
+  (get-symbol [this] (symbol (get-name this)))
+  (get-full-symbol [this] (get-symbol this))
+  (-validate-spec
+   [this]
+   ;; For some reason the compiler is throwing an error
+   ;; that says that -validate-spec is not defined
+   ;; on DomainSpec, even though it has a definition
+   ;; of the protocol ICruxSpec
+   (-validate-domain-spec this)))
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; Crux DDL: minor fns/macros
 
 (defn -ensure-is-crux-domain-spec [m]
@@ -146,23 +162,10 @@
      (create-domain {:name '~domain-name}
        ~@body)))
 
-(defn -quote-or-unquote-fields-form
-  "Allow fields a form to be either a vector of forms, or a var that
-has a reference to a vector of forms."
-  [fields owner]
-  (cond
-    (vector? fields) `'[~@fields]
-    (unquoted? fields) (second fields)
-    (= fields 'entity-fields) 'entity-fields
-    :else (throw+
-           (java.lang.IllegalArgumentException.
-            (format "Crux: Illegal fields definition '%s' for %s"
-                    fields owner)))))
-
 (defmacro entity [domain-spec entity-name entity-fields & body]
   (let [fields (-quote-or-unquote-fields-form entity-fields entity-name)]
     `(let [entity-spec# (map->EntitySpec {DEFAULTS (DEFAULTS ~domain-spec)
-                                          :name ~(name entity-name)
+                                          ENTITY-NAME ~(name entity-name)
                                           ENTITY-SYMBOL '~(symbol entity-name)
                                           FIELDS ~fields})]
        (-> ~domain-spec
@@ -189,13 +192,14 @@ has a reference to a vector of forms."
 (defn- -property-dispatch-function [entity-or-event]
   (symbol (.getSimpleName (type entity-or-event))))
 
-(defn- -create-property-multifns [existing-multifns-map new-property-forms-map]
+(defn- -create-property-multimethods
+  [existing-multifns-map new-property-forms-map]
   (let [new-keys (set/difference (set (keys new-property-forms-map))
                                  (set (keys existing-multifns-map)))
         new-multifns-map (into {}
                            (for [k new-keys]
                              [k
-                              (create-multi-fn
+                              (create-multi
                                k -property-dispatch-function)]))]
     (merge existing-multifns-map new-multifns-map)))
 
@@ -214,13 +218,16 @@ has a reference to a vector of forms."
                   name-of-local-symbol
                   fields
                   property-sym
-                  (keys (PROPERTIES entity-spec)) form)]))]
+                  (keys (PROPERTIES entity-spec))
+                  form)]))]
     (doseq [[property-sym pfn] property-fns-map]
-      (addmethod-to-multi (existing-property-multifns property-sym)
+      (add-method-to-multi (existing-property-multifns property-sym)
                           dispatch-value pfn)))
   entity-spec)
 
-(defn- -add-property-forms [entity-spec property-forms-map & [event-spec]]
+(defn- -add-property-forms
+  "The property forms are always added to the entity-spec record."
+  [entity-spec property-forms-map & [event-spec]]
   (if event-spec
     (update-in entity-spec [EVENTS (EVENT-SYMBOL event-spec)
                             PROPERTY-FORMS]
@@ -238,7 +245,9 @@ has a reference to a vector of forms."
        ;; TODO add the FULL-COMMAND-SYMBOL dispatch val also
        (-> entity-spec
            (-add-property-forms property-forms-map event-spec)
-           (update-in [PROPERTIES] -create-property-multifns property-forms-map)
+           (update-in [PROPERTIES]
+                      -create-property-multimethods
+                      property-forms-map)
            (-add-multimethods-to-properties
             dispatch-value name-of-local-symbol fields property-forms-map)))))
 
@@ -374,7 +383,7 @@ has a reference to a vector of forms."
   (let [entity-symbol (ENTITY-SYMBOL entity-spec)]
 
     (when (get-in entity-spec [EVENTS event-symbol])
-      (throw-aready-declared-error
+      (throw-already-declared-error
        'event event-symbol 'entity entity-symbol))
 
     (when-not reduce-forms
@@ -388,10 +397,12 @@ has a reference to a vector of forms."
             COMMAND-SYMBOL command-symbol
             FULL-COMMAND-SYMBOL (symbol
                                  (format "%s%s"
-                                     (COMMAND-SYMBOL event-spec) entity-symbol))
+                                         (COMMAND-SYMBOL event-spec)
+                                         entity-symbol))
             FULL-EVENT-SYMBOL (symbol
                                (format "%s%s"
-                                      (ENTITY-SYMBOL entity-spec) event-symbol))
+                                       (ENTITY-SYMBOL entity-spec)
+                                       event-symbol))
 
             FIELDS fields
             ADDITIONAL-EVENT-ATTRS additional-event-attrs

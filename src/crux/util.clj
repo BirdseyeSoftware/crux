@@ -1,8 +1,15 @@
 (ns crux.util
-  (:require [clojure.set :as set])
-  (:require [clojure.java.io :refer [reader]])
-  (:import [clojure.lang LineNumberingPushbackReader])
-  (:import [java.io File]))
+  (:require [clojure.set :as set]
+            [clojure.java.io :refer [reader]])
+
+  (:require [slingshot.slingshot :refer [throw+]])
+
+  (:import [clojure.lang LineNumberingPushbackReader]
+           [java.io File]))
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; Data Structure utils
 
 (defn submap? [m superm]
   (set/subset? (set (seq m)) (set (seq superm))))
@@ -15,32 +22,35 @@
   (into {} (for [[k v] m]
              [(modifier-fn k) v])))
 
-(defn create-multi-fn [multifn-name dispatch-fn]
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; Exception utils
+
+(defn throw-already-declared-error [declaration-type sym owner-type owner]
+  (throw+
+   (java.lang.IllegalArgumentException.
+    (format "Crux: %s '%s' already declared for %s '%s'"
+            declaration-type sym owner-type owner))))
+
+(defn throw-reduce-forms-required-error [event-symbol]
+  (throw+
+   (java.lang.IllegalArgumentException.
+    (format "Crux: %s '%s' requires a reduce form"
+            event-symbol))))
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; multimethod utils
+
+(defn create-multi [multifn-name dispatch-fn]
   (new clojure.lang.MultiFn (name multifn-name) dispatch-fn
        :default #'clojure.core/global-hierarchy))
 
-(defn addmethod-to-multi
+(defn add-method-to-multi
   [multifn dispatch-val fn]
   (. multifn addMethod dispatch-val fn))
 
-(defn eval-with-meta [form meta-info]
-  (with-meta (eval form)
-    (merge {:crux/generated-code form}
-           meta-info)))
-
-(defn unquoted?
-  "Check if the form is syntax-unquoted: like ~form"
-  [form]
-  (and (seq? form)
-       (= (first form) 'clojure.core/unquote)))
-
-(defn defrecord-dynamically [record-symbol fields]
-  (let [cls (eval `(defrecord ~record-symbol ~fields))
-        ctor-symbol (symbol (str "map->" record-symbol))]
-    {:record-class cls
-     :record-symbol record-symbol
-     :record-ctor (eval `~ctor-symbol)
-     :record-ctor-symbol ctor-symbol}))
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; defrecord extensions
 
 (defmacro defrecord-keep-meta [name [& fields-with-meta] & body]
   `(do
@@ -48,8 +58,21 @@
      (defrecord ~name [~@fields-with-meta]
        ~@body)))
 
+(defn defrecord-dynamically [record-symbol fields]
+  (let [cls (eval `(defrecord-keep-meta ~record-symbol ~fields))
+        ctor-symbol (symbol (str "map->" record-symbol))]
+    {:record-class cls
+     :record-symbol record-symbol
+     :record-ctor (eval `~ctor-symbol)
+     :record-ctor-symbol ctor-symbol}))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; Form reader
+
+;;; stolen from:
+;;; https://github.com/jonase/kibit/blob/master/src/kibit/check.clj
+
 (defn -read-forms-from-reader
-  ;; see https://github.com/jonase/kibit/blob/master/src/kibit/check.clj
   "Gen a lazy sequence of top level forms from a LineNumberingPushbackReader"
   [^LineNumberingPushbackReader r]
   (lazy-seq
@@ -66,7 +89,39 @@
   (-read-forms-from-reader
    (LineNumberingPushbackReader. (reader file-or-path))))
 
-;; Stolen from clojure.contrib.with-ns
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; macros utils
+
+;;; some of them stolen from clojure.contrib.with-ns
+
+
+(defn type-symbol [instance]
+  (symbol (.getSimpleName (type instance))))
+
+(defn unquoted?
+  "Check if the form is syntax-unquoted: like ~form"
+  [form]
+  (and (seq? form)
+       (= (first form) 'clojure.core/unquote)))
+
+(defn -quote-or-unquote-fields-form
+  "Allow fields form to be either a vector of forms, or a var that
+has a reference to a vector of forms."
+  [fields owner]
+  (cond
+    (vector? fields) `'[~@fields]
+    (unquoted? fields) (second fields)
+    (= fields 'entity-fields) 'entity-fields
+    :else (throw+
+           (java.lang.IllegalArgumentException.
+            (format "Crux: Illegal fields definition '%s' for %s"
+                    fields owner)))))
+
+(defn eval-with-meta [form meta-info]
+  (with-meta (eval form)
+    (merge {:crux/generated-code form}
+           meta-info)))
+
 (defmacro with-ns
   "Evaluates body in another namespace. ns is either a namespace
 object or a symbol. This makes it possible to define functions in
