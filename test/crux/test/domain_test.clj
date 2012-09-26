@@ -5,6 +5,8 @@
             [clojure.set :as set]
             [slingshot.slingshot :refer [throw+]]
 
+            [savant.core :as savant]
+
             [crux.example.tickets :as tickets]
             [crux.example.orders-with-credit-allowance
              :as orders]
@@ -82,6 +84,21 @@
             result (command->event command)]
         (is (= (type result)
                event-class))))))
+
+(deftest test-store-events-function-on-reified-domain
+  (let [fpath        "test/crux/example/ticket_sample_events2.clj"
+        domain-spec  (tickets/build-reified-test-domain-spec)
+        events       (read-domain-data-from-file domain-spec fpath)
+        store        (get-in domain-spec
+                             [:reified :event-store :store])
+        store-event  (get-in domain-spec
+                             [:reified :event-store :store-event-fn])]
+
+    (store-event events)
+    (is (and (not (nil? (savant/get-stream store 'Ticket "1")))))
+    (is (= (count events)
+           (count (savant/get-events-seq
+                  (savant/get-stream store 'Ticket "1")))))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
