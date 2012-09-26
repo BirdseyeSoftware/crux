@@ -16,6 +16,7 @@
   (:require [crux.internal.keys :refer :all]
             [crux.reify.records  :as records]
             [crux.reify.entity-finder :as finder]
+            [crux.reify.store :as store]
             [crux.reify.reducers :as reducers]
             [crux.reify.commands :as commands]
             [crux.util :refer
@@ -30,7 +31,10 @@
       reducers/-reify-all-entity-event-reducers!
       commands/-reify-check-command-constraints-function
       commands/-reify-validate-command-function
-      commands/-reify-command->event-fn-to-domain-spec))
+      commands/-reify-command->event-fn-to-domain-spec
+      (store/-add-event-store {:memory {:name (:name domain-spec)}})
+      store/-reify-store-events-function
+      ))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; tools for using the records reified here
