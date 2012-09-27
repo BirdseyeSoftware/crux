@@ -43,15 +43,6 @@
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(defn -add-event-store [domain-spec store-args]
-  (cond
-    (contains? store-args :memory)
-    (update-in domain-spec [:reified :event-store]
-               assoc :store (mem/get-event-store (:memory store-args)))
-    :else (throw+ {:type :crux/store-not-supported
-                   :message "The only store supported is memory"})))
-
-;;;;;;;;;;;;;;;;;;;;
 
 (defn -get-entity-stream [store entity-symbol oid]
   (if (store/exists? store entity-symbol oid)
@@ -112,3 +103,16 @@
   (let [store (get-in domain-spec [:reified :event-store :store])]
     (update-in domain-spec [:crux.reify/get-entity]
                -decorate-get-entity domain-spec)))
+
+;;;;;;;;;;;;;;;;;;;;
+
+(defn -reify-event-store [domain-spec store-args]
+  (cond
+    (contains? store-args :memory)
+    (-> domain-spec
+        (update-in [:reified :event-store]
+                   assoc :store (mem/get-event-store (:memory store-args)))
+        -reify-store-events-function
+        -reify-get-entity-function)
+    :else (throw+ {:type :crux/store-not-supported
+                   :message "The only store supported currently is memory"})))

@@ -32,9 +32,7 @@
       commands/-reify-check-command-constraints-function
       commands/-reify-validate-command-function
       commands/-reify-command->event-fn-to-domain-spec
-      (store/-add-event-store {:memory {:name (:name domain-spec)}})
-      store/-reify-store-events-function
-      ))
+      (store/-reify-event-store {:memory {:name (:name domain-spec)}})))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; tools for using the records reified here
