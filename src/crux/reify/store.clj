@@ -1,6 +1,7 @@
 (ns crux.reify.store
   (:require [slingshot.slingshot :refer [throw+]])
-  (:require [crux.util :refer
+  (:require [crux.internal.keys :refer :all]
+            [crux.util :refer
              [type-symbol]])
   (:require [savant.core :as store]
             [savant.store.memory :as mem]))
@@ -52,7 +53,22 @@
 
 ;;;;;;;;;;;;;;;;;;;;
 
-(defn -reify-store-events-function [domain-spec]
+(defn -get-entity-stream [store entity-symbol oid]
+  (if (store/exists? store entity-symbol oid)
+    (store/get-stream store entity-symbol oid)
+    (store/create-stream store entity-symbol oid)))
+
+(defn- -rehydrate-cached-entity-with-events
+  [domain-spec entity-symbol entity-oid events]
+  (let [get-entity (get-in domain-spec [:crux.reify/get-entity])
+        set-entity (get-in domain-spec [:crux.reify/set-entity])
+        reducer-fn (get-in domain-spec [:crux.reify/reducers entity-symbol])
+        entity     (get-entity entity-symbol entity-oid)]
+    (set-entity entity-symbol entity-oid (reduce reducer-fn entity events))
+    entity))
+
+(defn -reify-store-events-function
+  [domain-spec]
   (let [store (get-event-store domain-spec)]
     (update-in domain-spec [:reified :event-store]
                assoc :store-event-fn
@@ -60,18 +76,39 @@
                  (let [events        (seq events)
                        event-symbol  (type-symbol (first events))
                        entity-symbol (get-entity-symbol-from-event-symbol
-                                      domain-spec
-                                      event-symbol)
+                                        domain-spec
+                                        event-symbol)
                        {oid :oid
                         rev :rev}    (-> events first meta :crux/target)
-                       entity-stream
-                       (if (store/exists? store entity-symbol oid)
-                         (store/get-stream store entity-symbol oid)
-                         (store/create-stream store entity-symbol oid))]
-                   (store/commit-events! entity-stream events))))))
+                       entity-stream (-get-entity-stream
+                                        store entity-symbol oid)]
+                   (do
+                     (store/commit-events! entity-stream events)
+                     (-rehydrate-cached-entity-with-events
+                       domain-spec entity-symbol oid events)))))))
 
 ;;;;;;;;;;;;;;;;;;;;
 
+(defn- -decorate-get-entity
+  [get-entity-from-cache domain-spec]
+  (let [store      (get-in domain-spec [:reified :event-store :store])
+        set-entity (get-in domain-spec [:crux.reify/set-entity])]
+
+    (fn get-entity-from-store-fn
+      [entity-symbol entity-oid #_rev]
+      (let [reducer-fn (get-in domain-spec [:crux.reify/reducers entity-symbol])
+            entity     (get-entity-from-cache entity-symbol entity-oid)
+            stream     (store/get-stream store entity-symbol entity-oid)]
+        ;; return either the cached entity or reduce events,
+        ;; store it on cache, and return the result
+        (or entity
+            (let [created-entity (and stream
+                                      (reduce reducer-fn
+                                              nil
+                                              (store/get-events-seq stream)))]
+              (set-entity entity-symbol entity-oid created-entity)))))))
+
 (defn -reify-get-entity-function [domain-spec]
   (let [store (get-in domain-spec [:reified :event-store :store])]
-    domain-spec))
+    (update-in domain-spec [:crux.reify/get-entity]
+               -decorate-get-entity domain-spec)))

@@ -26,7 +26,7 @@
             record-map       (get-in domain-spec
                                      [:crux.reify/records event-rec-symbol])]
         (when-not reducer-fn
-          (throw+ {:type :library/specify-reducer-error
+          (throw+ {:type :crux/specify-reducer-error
                    :msg ""}))
 
         (add-method-to-multi
@@ -52,7 +52,7 @@
             record-map       (get-in domain-spec
                                      [:crux.reify/records event-rec-symbol])]
         (when-not reducer-fn
-          (throw+ {:type :library/specify-reducer-error
+          (throw+ {:type :crux/specify-reducer-error
                    :msg ""}))
 
         (add-method-to-multi
