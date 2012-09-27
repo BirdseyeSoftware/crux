@@ -60,8 +60,8 @@
         set-entity (:crux.reify/set-entity domain-spec)
         reduction-test (fn [ent0 ev]
                          (let [ent (entity-reducer ent0 ev)]
-                           (set-entity entity 1 entity0)
-                           (is (= entity0 (get-entity entity 1)))
+                           (set-entity entity "1" entity0)
+                           (is (= entity0 (get-entity entity "1")))
                            ent))]
     (is (submap? expected
                  (reduce reduction-test entity0 events)))))
@@ -97,6 +97,10 @@
 
     (store-event events)
     (is (and (not (nil? (savant/get-stream store 'Ticket "1")))))
+    ;; NOTE:
+    ;; This test is broken because we are using the same
+    ;; store multiple times, maybe we need a function to flush
+    ;; the storage (one from a savant protocol perhaps?)
     #_(is (= (count events)
            (count (savant/get-events-seq
                   (savant/get-stream store 'Ticket "1")))))))
