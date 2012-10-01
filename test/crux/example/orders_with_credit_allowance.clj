@@ -7,7 +7,8 @@
   (:require [crux.domain :refer :all])
   (:require [crux.reify :refer [reify-domain-spec!]]))
 
-(defdomain orders
+;;; full version with command constraints, properties, etc.
+#_(defdomain orders
   (entity Customer [name credit-allowance outstanding-balance]
           (properties
            {available-credit (- credit-allowance outstanding-balance)
@@ -27,5 +28,23 @@
         :properties {order-total (* (:qty event) (:unit-price event))}}
        (update-in [:outstanding-balance] + (order-total event))])))
 
+;;; a simpler version without the command constraints and props
+
+(defdomain orders
+  (entity Customer [name credit-allowance outstanding-balance]
+          (events
+            [Created Create entity-fields
+             (merge {:outstanding-balance 0
+                     :credit-allowance 1000}
+                    (filter second event))]
+            [OrderPlaced PlaceOrder [product unit-price quantity]
+             (update-in [:outstanding-balance]
+                        + (* unit-price quantity))
+             ]
+            [BalancePaid PayBalance [amount]
+             (update-in [:outstanding-balance]
+                        - amount)]))
+  reify-domain-spec!)
+
 (defn build-reified-test-domain-spec []
-  (reify-domain-spec! orders))
+  orders)
