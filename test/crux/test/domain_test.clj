@@ -24,7 +24,8 @@
               get-entity-ctor
               reduce-events
               reduction-of-events
-                                        ;event-log-to-reductions-report
+              print-event-reductions
+              event-log-to-reductions-report
               ]])
   (:import [crux.domain DomainSpec]))
 
@@ -122,56 +123,22 @@
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(defn zip-reductions [events event-reductions & [begin & [end]]]
-  (let [begin (or begin 0)
-        zipped (into [] (map vector events
-                             event-reductions ; input
-                             (rest event-reductions) ; output
-                             ))
-        end (or end (count zipped))]
-    (subvec zipped begin end)))
-
-(defn print-event-reductions [domain-spec events
-                              & {:keys [initial begin end highlight]}]
-  (let [event-reductions (reduction-of-events domain-spec events initial)
-        reductions (zip-reductions events event-reductions)
-        domain-prefix (symbol (:name domain-spec))
-        type-name #(.getSimpleName (type %))]
-    (doseq [[i [event input red]] (map vector
-                                       (range (count reductions))
-                                       reductions)]
-      (let [diff (into {} (set/difference (set red) (set input)))]
-        (println "")
-        (print (format "#%s/%s" domain-prefix (type-name event)))
-        (pprint (into {} (filter second event)))
-        (if (= highlight i)
-          (print "   #_result->>> ")
-          (print "   #_result-> "))
-        ;; (print (format "#%s/%s" domain-prefix (type-name red)) )
-        (pprint (into {} (filter second red)))
-        (print "   #_diff-> ")
-        (pprint diff)))))
-
 (deftest test-print-reductions-on-orders-domain
-  (let [file-path "test/crux/example/orders_test_specs.clj"
-        domain-spec (orders/build-reified-test-domain-spec)
-        {:keys [initial events expected]}
-        (first (read-domain-data-from-file domain-spec file-path))]
-    (print-event-reductions domain-spec events :highlight 4)))
+  (with-out-str
+    (let [file-path "test/crux/example/orders_test_specs.clj"
+          domain-spec (orders/build-reified-test-domain-spec)
+          {:keys [initial events expected]}
+          (first (read-domain-data-from-file domain-spec file-path))]
+      (print-event-reductions domain-spec events :highlight 4))))
 
-#_(deftest test-print-reductions-on-tickets-domain
-  (let [file-path "test/crux/example/tickets_sample_events1.clj"
-        domain-spec (tickets/build-reified-test-domain-spec)
-        {:keys [initial events expected]}
-        (first (read-domain-data-from-file domain-spec file-path))]
-    (print-event-reductions domain-spec events)))
+(deftest test-print-reductions-on-tickets-domain
+  (with-out-str
+    (let [file-path "test/crux/example/tickets_sample_events1.clj"
+          domain-spec (tickets/build-reified-test-domain-spec)
+          {:keys [initial events expected]}
+          (first (read-domain-data-from-file domain-spec file-path))]
+      (print-event-reductions domain-spec events))))
 
-(defn event-log-to-reductions []
-  (let [domain-spec (tickets/build-reified-test-domain-spec)
-        events (read-domain-event-log domain-spec "ticket-events.clj")]
-    (print-event-reductions domain-spec events)))
-
-;; (event-log-to-reductions)
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defn -perform-event-test [test-map domain-spec]

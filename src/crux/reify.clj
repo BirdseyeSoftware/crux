@@ -99,3 +99,39 @@
 
 (defn reduction-of-events [domain-spec events & [entity0]]
   (-reduce-events reductions domain-spec events entity0))
+
+
+(defn zip-reductions [events event-reductions & [begin & [end]]]
+  (let [begin (or begin 0)
+        zipped (into [] (map vector events
+                             event-reductions ; input
+                             (rest event-reductions) ; output
+                             ))
+        end (or end (count zipped))]
+    (subvec zipped begin end)))
+
+(defn print-event-reductions [domain-spec events
+                              & {:keys [initial begin end highlight]}]
+  (let [event-reductions (reduction-of-events domain-spec events initial)
+        reductions (zip-reductions events event-reductions)
+        domain-prefix (symbol (:name domain-spec))
+        type-name #(.getSimpleName (type %))]
+    (doseq [[i [event input red]] (map vector
+                                       (range (count reductions))
+                                       reductions)]
+      (let [diff (into {} (set/difference (set red) (set input)))]
+        (println "")
+        (print (format "#%s/%s" domain-prefix (type-name event)))
+        (pprint (into {} (filter second event)))
+        (if (= highlight i)
+          (print "   #_result->>> ")
+          (print "   #_result-> "))
+        ;; (print (format "#%s/%s" domain-prefix (type-name red)) )
+        (pprint (into {} (filter second red)))
+        (print "   #_diff-> ")
+        (pprint diff)))))
+
+(defn event-log-to-reductions-report [domain-spec file-path]
+  (print-event-reductions
+   domain-spec
+   (read-domain-event-log domain-spec file-path)))
