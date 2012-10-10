@@ -20,7 +20,8 @@
             [crux.reify.reducers :as reducers]
             [crux.reify.commands :as commands]
             [crux.util :refer
-             [map-over-keys read-forms-from-file]]))
+             [map-over-keys
+              read-forms-from-file]]))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
